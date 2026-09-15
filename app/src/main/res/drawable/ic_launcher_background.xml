@@ -1,12 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Dawn-sky paper.  Adaptive icons allow only path/group/clip-path, no
-     circle/cx/cy - see README "bugs we already paid for". -->
+<!-- Dawn sky + aerodrome silhouette, run-length batched from the
+     same SPR_HANGAR/SPR_TENT grids GameView draws (see mock/icon_design.py,
+     which is also what rendered out/icon_design.png and out/icon_masks.png
+     for verification before this file was generated). Background bleeds to
+     every edge on purpose - only the foreground plane needs the safe zone.
+     Regenerate with mock/gen_icon_xml.py, don't hand-edit. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:pathData="M0,0h108v108h-108z"
-        android:fillColor="#E9B068" />
+        android:pathData="M0.00,0.00h108.00v3.00h-108.00zM0.00,3.00h108.00v3.00h-108.00zM0.00,6.00h108.00v3.00h-108.00zM0.00,9.00h108.00v3.00h-108.00zM0.00,12.00h108.00v3.00h-108.00zM0.00,15.00h108.00v3.00h-108.00zM0.00,18.00h108.00v3.00h-108.00zM0.00,21.00h108.00v3.00h-108.00zM0.00,24.00h108.00v3.00h-108.00zM0.00,27.00h108.00v3.00h-108.00zM0.00,30.00h108.00v3.00h-108.00zM0.00,33.00h108.00v3.00h-108.00zM0.00,36.00h108.00v3.00h-108.00zM0.00,39.00h108.00v3.00h-108.00zM0.00,42.00h108.00v3.00h-108.00zM0.00,45.00h108.00v3.00h-108.00z"
+        android:fillColor="#C97A2E" />
+    <path
+        android:pathData="M0.00,48.00h108.00v3.00h-108.00zM0.00,51.00h108.00v3.00h-108.00zM0.00,54.00h108.00v3.00h-108.00zM0.00,57.00h108.00v3.00h-108.00zM0.00,60.00h108.00v3.00h-108.00z"
+        android:fillColor="#DB9A3C" />
+    <path
+        android:pathData="M0.00,63.00h108.00v3.00h-108.00zM0.00,66.00h108.00v3.00h-108.00zM0.00,69.00h108.00v3.00h-108.00zM0.00,72.00h108.00v3.00h-108.00z"
+        android:fillColor="#EAB752" />
+    <path
+        android:pathData="M0.00,75.00h108.00v3.00h-108.00zM0.00,78.00h108.00v3.00h-108.00z"
+        android:fillColor="#F6D488" />
+    <path
+        android:pathData="M69.00,57.00h15.00v3.00h-15.00zM63.00,60.00h24.00v3.00h-24.00zM60.00,63.00h30.00v3.00h-30.00zM60.00,66.00h33.00v3.00h-33.00zM57.00,69.00h36.00v3.00h-36.00zM57.00,72.00h36.00v3.00h-36.00zM57.00,75.00h36.00v3.00h-36.00zM57.00,78.00h36.00v3.00h-36.00z"
+        android:fillColor="#FBE7B8" />
+    <path
+        android:pathData="M0.00,81.00h108.00v3.00h-108.00zM0.00,84.00h108.00v3.00h-108.00zM0.00,87.00h108.00v3.00h-108.00zM0.00,90.00h108.00v3.00h-108.00zM0.00,93.00h108.00v3.00h-108.00zM0.00,96.00h108.00v3.00h-108.00zM0.00,99.00h108.00v3.00h-108.00zM0.00,102.00h108.00v3.00h-108.00zM0.00,105.00h108.00v3.00h-108.00zM3.00,54.00h42.00v3.00h-42.00zM-3.00,57.00h54.00v3.00h-54.00zM-6.00,60.00h60.00v3.00h-60.00zM-9.00,63.00h66.00v3.00h-66.00zM-9.00,66.00h6.00v3.00h-6.00zM51.00,66.00h6.00v3.00h-6.00zM-9.00,69.00h6.00v3.00h-6.00zM9.00,69.00h30.00v3.00h-30.00zM51.00,69.00h6.00v3.00h-6.00zM-9.00,72.00h6.00v3.00h-6.00zM9.00,72.00h30.00v3.00h-30.00zM51.00,72.00h6.00v3.00h-6.00zM-9.00,75.00h6.00v3.00h-6.00zM9.00,75.00h30.00v3.00h-30.00zM51.00,75.00h6.00v3.00h-6.00zM-9.00,78.00h6.00v3.00h-6.00zM9.00,78.00h30.00v3.00h-30.00zM51.00,78.00h6.00v3.00h-6.00zM-9.00,81.00h66.00v3.00h-66.00zM78.00,60.00h6.00v3.00h-6.00zM75.00,63.00h12.00v3.00h-12.00zM72.00,66.00h18.00v3.00h-18.00zM69.00,69.00h9.00v3.00h-9.00zM84.00,69.00h9.00v3.00h-9.00zM66.00,72.00h9.00v3.00h-9.00zM87.00,72.00h9.00v3.00h-9.00zM63.00,75.00h9.00v3.00h-9.00zM90.00,75.00h9.00v3.00h-9.00zM60.00,78.00h9.00v3.00h-9.00zM93.00,78.00h9.00v3.00h-9.00zM60.00,81.00h42.00v3.00h-42.00zM96.00,60.00h6.00v3.00h-6.00zM93.00,63.00h12.00v3.00h-12.00zM90.00,66.00h18.00v3.00h-18.00zM87.00,69.00h9.00v3.00h-9.00zM102.00,69.00h9.00v3.00h-9.00zM84.00,72.00h9.00v3.00h-9.00zM105.00,72.00h9.00v3.00h-9.00zM81.00,75.00h9.00v3.00h-9.00zM108.00,75.00h9.00v3.00h-9.00zM78.00,78.00h9.00v3.00h-9.00zM111.00,78.00h9.00v3.00h-9.00zM78.00,81.00h42.00v3.00h-42.00zM99.00,57.00h3.00v3.00h-3.00zM99.00,60.00h3.00v3.00h-3.00zM99.00,63.00h3.00v3.00h-3.00zM99.00,66.00h3.00v3.00h-3.00zM99.00,69.00h3.00v3.00h-3.00zM99.00,72.00h3.00v3.00h-3.00zM99.00,75.00h3.00v3.00h-3.00zM99.00,78.00h3.00v3.00h-3.00zM99.00,81.00h3.00v3.00h-3.00zM102.00,60.00h3.00v3.00h-3.00zM102.00,66.00h6.00v3.00h-6.00zM102.00,72.00h9.00v3.00h-9.00z"
+        android:fillColor="#1A1310" />
 </vector>

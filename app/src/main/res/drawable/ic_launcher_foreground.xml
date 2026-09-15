@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The plane silhouette is the same pixel grid GameView draws (SPR_PLANE
-     in Art.kt), run-length batched into vector path rects the same way the
-     renderer batches canvas.drawRect calls per row.  Regenerate with
-     mock/zoom.py's grid if the sprite ever changes. Verified to sit within
-     the adaptive-icon safe zone: worst corner at radius 28.5 of the 35/36
-     budget (see mock/, launcher icon audit). -->
+<!-- The plane silhouette, run-length batched from the same SPR_PLANE grid
+     GameView draws (see mock/icon_design.py - also generates the background
+     layer). Verified inside the adaptive-icon safe zone: worst corner at
+     radius 30.97 of the 35/36 budget (mock/icon_design.py's own audit, plus
+     out/icon_masks.png rendered under circle/squircle/square @ 192/96/48px).
+     Regenerate with mock/gen_icon_xml.py, don't hand-edit. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:pathData="M39.60,43.20h24.00v2.40h-24.00zM42.00,45.60h2.40v2.40h-2.40zM58.80,45.60h2.40v2.40h-2.40zM42.00,48.00h2.40v2.40h-2.40zM58.80,48.00h2.40v2.40h-2.40zM30.00,50.40h4.80v2.40h-4.80zM51.60,50.40h2.40v2.40h-2.40zM56.40,50.40h16.80v2.40h-16.80zM27.60,52.80h48.00v2.40h-48.00zM78.00,52.80h2.40v2.40h-2.40zM32.40,55.20h40.80v2.40h-40.80zM39.60,57.60h24.00v2.40h-24.00zM75.60,57.60h2.40v2.40h-2.40zM42.00,60.00h2.40v2.40h-2.40zM56.40,60.00h2.40v2.40h-2.40zM39.60,62.40h7.20v2.40h-7.20zM54.00,62.40h7.20v2.40h-7.20z"
+        android:pathData="M39.60,28.20h24.00v2.40h-24.00zM42.00,30.60h2.40v2.40h-2.40zM58.80,30.60h2.40v2.40h-2.40zM42.00,33.00h2.40v2.40h-2.40zM58.80,33.00h2.40v2.40h-2.40zM30.00,35.40h4.80v2.40h-4.80zM51.60,35.40h2.40v2.40h-2.40zM56.40,35.40h16.80v2.40h-16.80zM27.60,37.80h48.00v2.40h-48.00zM78.00,37.80h2.40v2.40h-2.40zM32.40,40.20h40.80v2.40h-40.80zM39.60,42.60h24.00v2.40h-24.00zM75.60,42.60h2.40v2.40h-2.40zM42.00,45.00h2.40v2.40h-2.40zM56.40,45.00h2.40v2.40h-2.40zM39.60,47.40h7.20v2.40h-7.20zM54.00,47.40h7.20v2.40h-7.20z"
         android:fillColor="#1A160F" />
 </vector>
