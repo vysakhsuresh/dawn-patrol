@@ -9,5 +9,5 @@ CP="$KT/kotlin-compiler.jar:$KT/kotlin-stdlib.jar:$KT/kotlin-reflect.jar:$KT/kot
 OUT="$1"; shift
 java -Xmx2g -cp "$CP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
   -no-stdlib -cp "$KT/kotlin-stdlib.jar" -jvm-target 17 \
-  "$ROOT"/app/src/main/java/com/dawnpatrol/game/{Art,World,Tune,Fb,Sim,Renderer}.kt \
+  "$ROOT"/app/src/main/java/com/dawnpatrol/game/{Art,World,Tune,Fb,Sim,Renderer,Warmup}.kt \
   "$@" -d "$OUT" 2>&1 | grep -v "^warning:" || true

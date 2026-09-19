@@ -607,22 +607,31 @@ class Renderer {
             }
             y += if (on == 1) 8 else 4
         }
+        // This tap only puts the card away - it does not launch anything, so
+        // it must not promise flight.
         if (((sim.ticks / 22f).toInt() and 1) == 0) {
-            val s2 = "TAP TO FLY"
+            val s2 = "TAP TO BEGIN"
             fb.plateText(s2, (Art.GW - Fb.textW(s2)) / 2, 152, 1, 1, 1, 2)
         }
     }
 
-    /** After the first sortie, just a beat to get your thumb ready. */
+    /**
+     * READY: the aeroplane is flying straight and level and the sortie starts
+     * on a LEFT press. Naming the side matters - the first control a player
+     * touches should be the one that keeps them in the air.
+     */
     private fun startPrompt(sim: Sim) {
         if (sim.bestScore > 0) {
             val b = "BEST " + sim.bestScore
             fb.plateText(b, (Art.GW - Fb.textW(b)) / 2, 40, 1, 1, 1, 2)
         }
         if (((sim.ticks / 22f).toInt() and 1) == 0) {
-            val s2 = "TAP TO FLY"
+            val s2 = "HOLD LEFT TO FLY"
             fb.plateText(s2, (Art.GW - Fb.textW(s2)) / 2, 150, 1, 1, 1, 2)
         }
+        // a standing reminder of the other thumb, small and out of the way
+        val s3 = "RIGHT = BOMB + GUNS"
+        fb.plateText(s3, (Art.GW - Fb.textW(s3)) / 2, 160, 1, 1, 1, 1)
     }
 
     private fun crashCard(sim: Sim) {

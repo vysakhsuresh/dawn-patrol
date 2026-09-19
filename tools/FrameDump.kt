@@ -63,6 +63,21 @@ object FrameDump {
             write(r, r.palette(sim.phase()), "$dir/f0_briefing.ppm")
         }
 
+        // ---- A  READY: the card is gone, the aeroplane is still flying ----
+        // The state the briefing tap now leaves you in. Nothing about this
+        // frame should suggest a plane in trouble.
+        run {
+            val sim = Sim(MemStore())
+            var t = 0
+            while (t < 40) { sim.update(1f); t++ }
+            sim.dismissBriefing()
+            // land on a tick where the blinking prompt is lit
+            while (t < 140) { sim.update(1f); t++ }
+            r.render(sim)
+            write(r, r.palette(sim.phase()), "$dir/fA_ready.ppm")
+            println("frameA ready: started=${sim.started} vy=${sim.vy}")
+        }
+
         // ---- 1  dawn: the opening minute, quiet, still climbing out -------
         run {
             val sim = Sim(MemStore())

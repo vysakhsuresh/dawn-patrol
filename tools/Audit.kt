@@ -661,6 +661,143 @@ object Audit {
     }
 
     // =====================================================================
+    //  A17  the start gate: nobody is ever dropped into a falling aeroplane
+    // =====================================================================
+    private fun a17StartGate() {
+        // The first thing a new player does is dismiss the briefing. For one
+        // revision that tap ALSO launched the sortie, so their first ever
+        // action dropped the aeroplane out of the sky. The card, the loiter
+        // and the launch are three separate states and this pins them.
+        val sim = Sim(MemStore())
+        check("A17 a fresh install opens on the briefing",
+            sim.showFullBriefing && !sim.started, "")
+
+        // dismissing the card must not launch anything
+        sim.dismissBriefing()
+        check("A17 dismissing the briefing does not launch the sortie",
+            !sim.showFullBriefing && !sim.started, "")
+
+        // and in that loiter the plane must not sink. Not "sink slowly" -
+        // not at all: it bobs about a fixed line and holds its altitude.
+        var lo = Float.MAX_VALUE; var hi = -Float.MAX_VALUE
+        var vyWorst = 0f
+        for (i in 0 until 3000) {
+            sim.update(1f)
+            lo = min(lo, sim.py); hi = max(hi, sim.py)
+            vyWorst = max(vyWorst, abs(sim.vy))
+        }
+        note(String.format("loiter holds %.2f rows of bob over 50s (limit %.1f)",
+            hi - lo, Tune.INTRO_BOB * 2f))
+        check("A17 the aeroplane does not sink while waiting",
+            hi - lo <= Tune.INTRO_BOB * 2f + 0.01f && vyWorst == 0f,
+            String.format("%.2f rows, worst |vy| %.3f", hi - lo, vyWorst))
+        check("A17 the world still moves while waiting", sim.camX > 0.0,
+            String.format("%.0f rows of drift", sim.camX))
+
+        // ...and the moment it IS launched, physics takes over
+        val before = sim.py
+        sim.start()
+        for (i in 0 until 40) { sim.climbing = false; sim.update(1f) }
+        check("A17 launching hands over to physics", sim.py > before,
+            String.format("%.2f -> %.2f rows", before, sim.py))
+
+        // after a run ends, the next one loiters again - you are never put
+        // straight back into a falling aeroplane either
+        while (!sim.gameOver) { sim.climbing = false; sim.update(1f) }
+        sim.reset()
+        check("A17 a restart loiters, it does not resume mid-fall",
+            !sim.started && !sim.crashed, "")
+        check("A17 the briefing does not come back mid-session",
+            !sim.showFullBriefing, "sorties=${sim.sorties}")
+    }
+
+    // =====================================================================
+    //  A18  every character the game draws must have a glyph
+    // =====================================================================
+    private fun a18NoMissingGlyphs() {
+        // A font miss is silent: the character reserves its width and draws
+        // nothing, so "RIGHT = BOMB + GUNS" reads "RIGHT   BOMB + GUNS" and
+        // looks like a spacing choice rather than a bug. Rather than try to
+        // enumerate the strings - half of them are built from scores and
+        // causes at runtime - drive the renderer through every state it has
+        // and see what it asks for.
+        Fb.missing.clear()
+        val r = Renderer()
+        var frames = 0
+
+        // the briefing, the loiter after it, and the READY prompt
+        run {
+            val s = Sim(MemStore())
+            for (i in 0 until 120) { s.update(1f); r.render(s); frames++ }
+            s.dismissBriefing()
+            for (i in 0 until 120) { s.update(1f); r.render(s); frames++ }
+        }
+        // full sorties: flight, flak, bombs, scouts, the life-lost banner,
+        // the balloon chevron, every palette phase, and the end card
+        for (bias in listOf(0f, 8f, 20f)) {
+            val s = Sim(MemStore())
+            s.dismissBriefing(); s.start()
+            var i = 0
+            while (i < 30000 && !(s.gameOver && s.crashTicks > Tune.GAMEOVER_LOCKOUT + 20f)) {
+                TestPilot.cruise(s, bias)
+                s.firing = true
+                if (i % 150 == 0) s.dropBomb()
+                s.update(1f)
+                if (i % 3 == 0) { r.render(s); frames++ }
+                i++
+            }
+            r.render(s); frames++
+        }
+        // and a deliberately greedy low run, for the high multiplier text
+        run {
+            val s = Sim(MemStore())
+            s.dismissBriefing(); s.start()
+            var i = 0
+            while (i < 30000 && !s.gameOver) {
+                s.climbing = s.altitude() < 18f
+                s.firing = true
+                s.update(1f)
+                if (i % 3 == 0) { r.render(s); frames++ }
+                i++
+            }
+        }
+        note("$frames frames rendered across every screen state")
+        check("A18 no character is drawn as a silent gap", Fb.missing.isEmpty(),
+            "missing glyphs: " + Fb.missing.joinToString("") { "'" + it + "'" })
+    }
+
+    // =====================================================================
+    //  A19  the cold-start warm-up is safe and bounded
+    // =====================================================================
+    private fun a19Warmup() {
+        // This runs on a background thread beside the live game on a device,
+        // so the two things that matter are that it cannot throw and that it
+        // cannot run away. It is in Warmup rather than GameView precisely so
+        // this check can execute the shipped code.
+        var frames = 0
+        var thrown: Throwable? = null
+        val t0 = System.nanoTime()
+        try { frames = Warmup.run(4_000_000_000L) } catch (e: Throwable) { thrown = e }
+        val secs = (System.nanoTime() - t0) / 1e9
+        note(String.format("warm-up: %d frames in %.2fs", frames, secs))
+        check("A19 the warm-up never throws", thrown == null, thrown?.toString() ?: "")
+        check("A19 the warm-up respects its budget", secs <= 4.6,
+            String.format("%.2fs against a 4.0s budget", secs))
+
+        // It must cover the paths it claims to: the point is to compile the
+        // gun, bomb, flak and end-card code before the player meets them.
+        // A fake clock that expires instantly proves the budget is checked
+        // rather than merely present.
+        val none = Warmup.run(0L, now = { 0L })
+        check("A19 an expired budget stops it dead", none == 0, "$none frames")
+
+        // and it must actually do enough work to matter - a warm-up that
+        // runs 30 frames warms nothing
+        check("A19 the warm-up does enough to warm anything", frames >= 1500,
+            "$frames frames")
+    }
+
+    // =====================================================================
     @JvmStatic
     fun main(args: Array<String>) {
         println("=".repeat(78))
@@ -682,6 +819,9 @@ object Audit {
         a14ScoutsAreDodgeable()
         a15GroundHonesty()
         a16CycleIsReachable()
+        a17StartGate()
+        a18NoMissingGlyphs()
+        a19Warmup()
         println("=".repeat(78))
         println("${failures.size} checks failed")
         if (failures.isNotEmpty()) {

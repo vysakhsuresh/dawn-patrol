@@ -308,6 +308,7 @@ object Art {
         ',' to arrayOf("...", "...", "...", ".X.", "X.."),
         '-' to arrayOf("...", "...", "XXX", "...", "..."),
         '+' to arrayOf("...", ".X.", "XXX", ".X.", "..."),
+        '=' to arrayOf("...", "XXX", "...", "XXX", "..."),
         '%' to arrayOf("X.X", "..X", ".X.", "X..", "X.X"),
         ':' to arrayOf("...", ".X.", "...", ".X.", "..."),
         '!' to arrayOf(".X.", ".X.", ".X.", "...", ".X."),

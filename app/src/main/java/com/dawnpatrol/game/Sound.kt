@@ -28,10 +28,16 @@ class Sound {
 
     private val rate = 22050
 
-    private var gun: AudioTrack? = null
-    private var bomb: AudioTrack? = null
-    private var thud: AudioTrack? = null
-    private var hit: AudioTrack? = null
+    // Built on a background thread (four AudioTrack builds are four trips
+    // through AudioFlinger, which is a visible stall on the main thread at
+    // startup), read on the main thread - so they have to be volatile, and
+    // `released` has to be checked after the build in case the view went
+    // away while we were still making them.
+    @Volatile private var gun: AudioTrack? = null
+    @Volatile private var bomb: AudioTrack? = null
+    @Volatile private var thud: AudioTrack? = null
+    @Volatile private var hit: AudioTrack? = null
+    @Volatile private var released = false
 
     // ---- engine drone ----------------------------------------------------
     @Volatile private var enginePitch = 0f
@@ -49,6 +55,7 @@ class Sound {
                 n * exp(-t * 14.0) * 0.6
             }
             hit = clip(0.5) { t -> sin(2.0 * PI * (160.0 - 120.0 * t) * t) * exp(-t * 4.0) }
+            if (released) release()
         } catch (e: Throwable) {
             gun = null; bomb = null; thud = null; hit = null
         }
@@ -165,6 +172,7 @@ class Sound {
     }
 
     fun release() {
+        released = true
         stopEngine()
         try { gun?.release(); bomb?.release(); thud?.release(); hit?.release() }
         catch (e: Throwable) { }

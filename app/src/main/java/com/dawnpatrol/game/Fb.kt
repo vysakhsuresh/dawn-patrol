@@ -222,7 +222,12 @@ class Fb(val w: Int, val h: Int) {
     fun text(s: String, x: Int, y: Int, v: Int = 1, sp: Int = 1, scale: Int = 1): Int {
         var cx = x
         for (ch in s.uppercase()) {
-            val g = Art.FONT[ch] ?: Art.FONT[' ']!!
+            // A character with no glyph draws as a silent gap, which is how
+            // "RIGHT = BOMB + GUNS" shipped for one build reading
+            // "RIGHT   BOMB + GUNS". It cannot be allowed to crash the game
+            // on a device, so it is recorded instead and Audit A18 fails on
+            // anything the renderer actually asks for and cannot draw.
+            val g = Art.FONT[ch] ?: run { missing.add(ch); Art.FONT[' ']!! }
             for (j in g.indices) {
                 val row = g[j]
                 for (i in row.indices) {
@@ -245,6 +250,9 @@ class Fb(val w: Int, val h: Int) {
     }
 
     companion object {
+        /** Characters the renderer asked for that the font does not have. */
+        val missing = HashSet<Char>()
+
         fun textW(s: String, sp: Int = 1, scale: Int = 1): Int =
             if (s.isEmpty()) 0 else s.length * (3 * scale + sp) - sp
 

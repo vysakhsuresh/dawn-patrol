@@ -34,6 +34,13 @@ briefing card with the controls and what everything is worth.
 
 All multiplied by your greed multiplier, up to ×9. Enemy scouts are worth 220.
 
+**Three states before you fly, not one.** The briefing card, the loiter, and
+the sortie are separate. The tap that dismisses the card means "I have read
+this" and launches nothing; the aeroplane keeps flying straight and level
+until you press the LEFT half, and that press *is* the climb — so the
+hand-over to physics starts with the nose coming up, never with a plane
+falling out of the sky. Audit A17.
+
 **Three machines.** A hit costs you one, not the run — you keep the world, the
 score and every wreck you have made, and you are put back in the air with a
 moment of invulnerability. The HUD shows what you have left, and a loss is
@@ -99,10 +106,14 @@ is a statement about the game, not about a model of it.
     A14 a scout can always be out-climbed             17.3 rows of separation vs 9 needed
     A15 the ground kills on contact, GAME OVER stops  flat box killed up to 6.00 rows early
     A16 the day/night cycle is reachable content      night at 1840 rows, 7/8 competent sorties see it
+    A17 the start gate: briefing / ready / flying     loiter holds altitude exactly, |vy| = 0
+    A18 no character is drawn as a silent gap         3259 frames across every screen state
+    A19 the cold-start warm-up is safe and bounded    2640 frames, stops dead on an expired budget
 
 ## Architecture
 
     Art.kt       sprites, font, dither table, canvas constants
+    Warmup.kt    the cold-start JIT warm-up + the 1-bit -> ARGB expansion
     Tune.kt      every number that decides how it FEELS, in one place
     World.kt     procedural world, seeded from absolute world position
     Sim.kt       the entire game, pure and deterministic
@@ -167,13 +178,29 @@ deep-dusk keyframe, where both sides are near-black, so nothing visibly jumps.
    Kotlin `shr` sign-extends and silently diverges. Audit A3.
 5. Binary files don't go through the GitHub MCP tools — this repo is pushed
    from the local clone.
-6. **Content nobody reaches is content that does not exist.** The night
+6. **A missing glyph is silent.** `Fb.text` falls back to a space, so an
+   absent character reserves its width and draws nothing — `RIGHT = BOMB`
+   shipped once as `RIGHT   BOMB` and looked like a spacing choice. The font
+   now records every character it was asked for and could not draw, and A18
+   drives the renderer through every screen state and fails on a non-empty
+   set. Deliberately not a crash: a font miss must never take down a device.
+7. **A first launch has no ART profile.** Everything runs interpreted until
+   it has been called enough to compile, the frame rate collapses, and
+   because the loop clamps `dt` the game drops into slow motion *as well as*
+   looking laggy — so the aeroplane answers the stick late. It fixes itself
+   on the second launch, which is exactly why it reaches players: it only
+   ever happens to someone opening the game for the first time. `Warmup.kt`
+   spends the seconds the briefing is on screen calling the real shipped
+   methods on a background thread (the JIT counts invocations *per method*,
+   so it must be those methods, not a copy — which is why the blit's
+   expansion loop lives there too). Audit A19.
+8. **Content nobody reaches is content that does not exist.** The night
    palette — the whole scene inverted, the plane a hole in the light — sat
    behind 3600 rows of flying that no sortie survives. A crude test pilot
    dying early looks exactly like content being hard to reach, so the test
    pilot got good first (`tools/TestPilot.kt`), and then the phase length was
    set from what it measured. Audit A16.
-7. **Adaptive icons:** VectorDrawable only (`<path>`/`<group>`/`<clip-path>`,
+9. **Adaptive icons:** VectorDrawable only (`<path>`/`<group>`/`<clip-path>`,
    no `<circle>`), content inside the 66% safe circle, verified under circle,
    squircle and square masks. `mock/icon_masks.py`, `out/icon_masks.png`.
 

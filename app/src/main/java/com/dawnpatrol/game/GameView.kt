@@ -60,13 +60,18 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     // ---- loop ------------------------------------------------------------
     private var running = false
     private var lastFrameNanos = 0L
+    private var warmed = false
 
     init { isFocusable = true }
 
     // ---------------------------------------------------------------- loop
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        sound.load()
+        // Building four AudioTracks is four trips through AudioFlinger. On
+        // the main thread that is a stall in the first frames, exactly when
+        // the player is forming their first impression of how it responds.
+        Thread { sound.load() }.apply { isDaemon = true }.start()
+        warmUp()
     }
 
     override fun onDetachedFromWindow() {
@@ -146,10 +151,25 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
                     if (sim.canRestart()) restart()
                     return true
                 }
-                // first touch launches the sortie; it also counts as input,
-                // so the tap that starts you is not swallowed
-                sim.start()
-                if (event.getX(i) < halfW) {
+                if (sim.showFullBriefing) {
+                    // SWALLOWED on purpose. This tap means "I have read the
+                    // card", and letting it fall through is what made a new
+                    // player's first ever action drop the aeroplane out of
+                    // the sky. It puts the card away; the plane keeps flying
+                    // straight and level until they press LEFT.
+                    sim.dismissBriefing()
+                    return true
+                }
+                val left = event.getX(i) < halfW
+                if (!sim.started) {
+                    // The sortie begins on a LEFT press and that same press
+                    // IS the climb, so the hand-over to physics starts with
+                    // the plane going up, not down. A right-hand tap here is
+                    // ignored rather than wasting a bomb before the off.
+                    if (!left) return true
+                    sim.start()
+                }
+                if (left) {
                     if (leftPointer < 0) leftPointer = id
                 } else {
                     if (rightPointer < 0) rightPointer = id
@@ -202,20 +222,29 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     // -------------------------------------------------------------- render
     override fun onDraw(canvas: Canvas) {
         renderer.render(sim)
-        val pal = renderer.palette(sim.phase())
-
-        val buf = renderer.fb.p
-        val ink = pal.ink or (0xFF shl 24)
-        val paper = pal.paper or (0xFF shl 24)
-        var i = 0
-        val n = buf.size
-        while (i < n) {
-            px[i] = if (buf[i].toInt() != 0) ink else paper
-            i++
-        }
+        Warmup.expand(renderer.fb, renderer.palette(sim.phase()), px)
         bmp.setPixels(px, 0, Art.GW, 0, 0, Art.GW, Art.GH)
 
         canvas.drawColor(Color.BLACK)   // letterbox bars
         canvas.drawBitmap(bmp, src, dst, blitPaint)
+    }
+
+    // -------------------------------------------------------------- warm-up
+    /**
+     * Drive the JIT through the real shipped methods while the briefing card
+     * is on screen, so a first-ever launch is not spent interpreting the
+     * renderer. The work itself is in Warmup, free of android.*, so Audit
+     * A19 runs exactly this code. Any failure is dropped: a cold start is a
+     * slow game, but a crashed warm-up is no game at all.
+     */
+    private fun warmUp() {
+        if (warmed) return          // attach can happen more than once
+        warmed = true
+        val th = Thread {
+            try { Warmup.run(4_000_000_000L) } catch (e: Throwable) { }
+        }
+        th.priority = Thread.MIN_PRIORITY
+        th.isDaemon = true
+        th.start()
     }
 }

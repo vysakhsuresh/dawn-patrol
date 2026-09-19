@@ -101,7 +101,23 @@ class Sim(private val store: Store) {
     // plane before they have found the controls reads as a crash, not a game.
     var started = false; private set
     var sorties = 0; private set
-    val showFullBriefing: Boolean get() = sorties == 0
+
+    // Three states, not two. The briefing card is its own step: the tap that
+    // dismisses it must NOT also launch the sortie, because that tap is the
+    // player saying "I have read this", not "I am ready to fly". Merging the
+    // two meant the very first thing a new player ever saw was their
+    // aeroplane falling out of the sky the instant they touched the screen.
+    //
+    //   BRIEFING  -> tap anywhere   -> READY
+    //   READY     -> press LEFT     -> FLYING   (and that press is the climb)
+    //
+    // READY is the same straight-and-level loiter used between lives, so the
+    // plane is always visibly flying before physics is handed over.
+    private var briefed = false
+    val showFullBriefing: Boolean get() = sorties == 0 && !briefed
+
+    /** Put the briefing card away without launching anything. */
+    fun dismissBriefing() { briefed = true }
 
     // ---- score --------------------------------------------------------------
     var score = 0; private set
@@ -217,7 +233,7 @@ class Sim(private val store: Store) {
     fun canRestart(): Boolean =
         crashed && crashTicks >= Tune.GAMEOVER_LOCKOUT
 
-    /** First touch: the aeroplane stops loitering and the sortie begins. */
+    /** The LEFT press that ends the loiter and hands over to physics. */
     fun start() {
         if (started) return
         started = true
