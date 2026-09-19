@@ -139,7 +139,13 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val i = event.actionIndex
                 val id = event.getPointerId(i)
-                if (sim.crashed) { restart(); return true }
+                if (sim.crashed) {
+                    // Only once the card has had time to be read, and only on
+                    // a genuinely new touch - dying mid-tap must not be taken
+                    // as "play again".
+                    if (sim.canRestart()) restart()
+                    return true
+                }
                 // first touch launches the sortie; it also counts as input,
                 // so the tap that starts you is not swallowed
                 sim.start()

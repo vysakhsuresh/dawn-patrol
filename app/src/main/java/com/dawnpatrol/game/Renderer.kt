@@ -440,11 +440,9 @@ class Renderer {
 
     // ---- the aeroplane ----------------------------------------------------------
     private fun plane(sim: Sim, night: Boolean) {
-        val spr = when {
-            sim.vy < -0.15f -> Art.SPR_PLANE_CLIMB
-            sim.vy > 0.15f -> Art.SPR_PLANE_DIVE
-            else -> Art.SPR_PLANE
-        }
+        // Sim owns the choice, so the drawn shape and the collided shape
+        // can never drift apart.
+        val spr = sim.planeSprite()
         val gx = Art.PLAYER_X
         val gy = Math.round(sim.py).toInt()
 
@@ -628,7 +626,8 @@ class Renderer {
     }
 
     private fun crashCard(sim: Sim) {
-        val title = if (sim.gameOver) "GAME OVER" else "SHOT DOWN"
+        // `crashed` only ever means the run is over, so there is one title.
+        val title = "GAME OVER"
         val tw = Fb.textW(title, 2, 2)
         fb.plateText(title, (Art.GW - tw) / 2, 36, 1, 2, 2, 3)
         val lines = listOf(
@@ -645,8 +644,8 @@ class Renderer {
             fb.plateText(l, (Art.GW - w) / 2, y, 1, 1, 1, 1)
             y += 8
         }
-        if (((sim.crashTicks / 20f).toInt() and 1) == 0) {
-            val s = if (sim.gameOver) "TAP TO FLY AGAIN" else "TAP TO SCRAMBLE"
+        if (sim.canRestart() && ((sim.crashTicks / 20f).toInt() and 1) == 0) {
+            val s = "TAP TO FLY AGAIN"
             fb.plateText(s, (Art.GW - Fb.textW(s)) / 2, 152, 1, 1, 1, 2)
         }
     }

@@ -127,12 +127,20 @@ object Tune {
     const val LINE_START = 0.42f
 
     // ---- day / night ------------------------------------------------------
-    // Five phases: dawn, day, dusk, deep dusk, night. At 2600 rows a phase
-    // the full cycle took over three minutes of unbroken flight, so in
-    // practice nobody would ever have seen the night pass - the whole
-    // inverted palette would have been dead content. 900 puts a full cycle
-    // at roughly 80 seconds, so a decent run actually flies into darkness.
-    const val PHASE_LEN = 900f        // rows of world per phase
+    // Five phases: dawn, day, dusk, deep dusk, night. MEASURED, not guessed:
+    // tools/FrameDump.kt flies a competent test pilot (dodges committed
+    // shells, breaks off scouts, cruises above the flak envelope) and it dies
+    // at about 1970 rows with all three machines spent. At the original 2600
+    // rows a phase, night began at 10400 rows; at 900 it began at 3600. Both
+    // numbers are past the end of any real sortie, so the entire inverted
+    // night palette - the best-looking thing in the game - was content no
+    // player would ever see.
+    //
+    // 460 puts night at 1840 rows and a full cycle at 2300, so a good run
+    // flies dawn -> day -> dusk -> night and back out the other side. The
+    // palette crossfades continuously rather than stepping, so a shorter
+    // phase reads as a faster drift, not as flicker.
+    const val PHASE_LEN = 460f        // rows of world per phase
 
     // ---- lives ---------------------------------------------------------
     // One hit ending the whole run gave no room to learn and no moment to
@@ -143,6 +151,14 @@ object Tune {
     const val INVULN = 110f           // ticks of grace after a respawn
     const val LIFE_FLASH = 70f        // ticks the "LIFE LOST" banner holds
     const val RESPAWN_ALT = 46f       // rows above ground to put you back
+
+    // GAME OVER has to actually stop. Without a lockout the card is gone
+    // before it is read: you die mid-tap, your very next finger movement -
+    // which during play is constant - is taken as "start again".
+    // `crashed` means the RUN is over - losing a life with machines left
+    // respawns instead - so there is one lockout, not two. A second constant
+    // for "between lives" would be a branch that can never run.
+    const val GAMEOVER_LOCKOUT = 80f  // ticks before a tap is accepted
 
     // ---- enemy scouts ----------------------------------------------------
     // The fix for "nothing can touch me up high". Flak is a ground weapon

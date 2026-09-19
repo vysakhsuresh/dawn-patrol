@@ -38,7 +38,10 @@ All multiplied by your greed multiplier, up to ×9. Enemy scouts are worth 220.
 score and every wreck you have made, and you are put back in the air with a
 moment of invulnerability. The HUD shows what you have left, and a loss is
 announced across the middle of the screen, not just in the corner. Running out
-is GAME OVER.
+is GAME OVER, and GAME OVER means the world stops: the card holds for 80
+ticks before a tap is accepted, because you die mid-tap and the very next
+finger movement would otherwise restart the run before you had read it.
+Audit A15.
 
 **Nowhere is safe.** Flak is a ground weapon and physically cannot reach the
 ceiling, which made cruising at the top a safe, scoreless, boring optimum.
@@ -75,6 +78,7 @@ game looks wrong.
     tools/kotlinc-setup.sh     # one-time: fetches a standalone Kotlin compiler
     tools/audit.sh             # the fairness + regression proof
     tools/frames.sh            # render real frames to out/kt/
+    tools/TestPilot.kt         # a competent pilot, shared by both - ships in neither
 
 The audit compiles against the same classes that go in the APK. A result there
 is a statement about the game, not about a model of it.
@@ -93,6 +97,8 @@ is a statement about the game, not about a model of it.
     A12 lives work, respawn is safe and has grace     3 machines, then game over
     A13 scouts reach a ceiling-hugging pilot          6/6 ceiling runs engaged
     A14 a scout can always be out-climbed             17.3 rows of separation vs 9 needed
+    A15 the ground kills on contact, GAME OVER stops  flat box killed up to 6.00 rows early
+    A16 the day/night cycle is reachable content      night at 1840 rows, 7/8 competent sorties see it
 
 ## Architecture
 
@@ -149,7 +155,11 @@ deep-dusk keyframe, where both sides are near-black, so nothing visibly jumps.
    and `frac()` takes the cell index the caller already has, so index and
    offset come from the same `floor()`. Audit A1/A2.
 2. **Art must not lie about physics.** The hitbox is the exact drawn extent —
-   no forgiving shrink, which is the same lie wearing a hat. Audit A4.
+   no forgiving shrink, which is the same lie wearing a hat. Audit A4. And a
+   box is not a shape: the plane's bottom row is only the WHEELS, so a flat
+   22-column underside hung up to 6 rows below the artwork and killed you with
+   visible daylight underneath. Ground contact is tested per column against
+   the sprite's real profile. Audit A15, picture in `out/kt/f9_contact.png`.
 3. **Prove fairness numerically.** A6/A7/A8 are that proof, run against
    shipped code.
 4. **Unary minus binds tighter than `%`.** No `%` on anything that can be
@@ -157,7 +167,13 @@ deep-dusk keyframe, where both sides are near-black, so nothing visibly jumps.
    Kotlin `shr` sign-extends and silently diverges. Audit A3.
 5. Binary files don't go through the GitHub MCP tools — this repo is pushed
    from the local clone.
-6. **Adaptive icons:** VectorDrawable only (`<path>`/`<group>`/`<clip-path>`,
+6. **Content nobody reaches is content that does not exist.** The night
+   palette — the whole scene inverted, the plane a hole in the light — sat
+   behind 3600 rows of flying that no sortie survives. A crude test pilot
+   dying early looks exactly like content being hard to reach, so the test
+   pilot got good first (`tools/TestPilot.kt`), and then the phase length was
+   set from what it measured. Audit A16.
+7. **Adaptive icons:** VectorDrawable only (`<path>`/`<group>`/`<clip-path>`,
    no `<circle>`), content inside the 66% safe circle, verified under circle,
    squircle and square masks. `mock/icon_masks.py`, `out/icon_masks.png`.
 

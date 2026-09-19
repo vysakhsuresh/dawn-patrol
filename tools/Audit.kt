@@ -524,6 +524,143 @@ object Audit {
     }
 
     // =====================================================================
+    //  A15  the ground kills you when it TOUCHES you, and the run stops
+    // =====================================================================
+    private fun a15GroundHonesty() {
+        val sim = Sim(MemStore())
+
+        // ---- the shape that collides is the shape that is drawn ----------
+        // The plane's bottom ROW is only the wheels; at the nose and tail the
+        // lowest drawn pixel is three rows higher. A flat box across all 22
+        // columns therefore hangs below the artwork at both ends, and on
+        // rising ground the empty nose columns reach the mud first - you die
+        // with daylight under the aeroplane, which is exactly what "feels
+        // odd" feels like.
+        var worstEarly = 0f; var worstAt = 0.0
+        var honestIsLate = 0
+        for (i in 0 until 6000) {
+            val x0 = i * 7.0 + 0.5
+            for (spr in listOf(Art.SPR_PLANE, Art.SPR_PLANE_CLIMB, Art.SPR_PLANE_DIVE)) {
+                val prof = sim.bottomProfile(spr)
+                // the lowest py at which each model first reports a touch
+                var pyHonest = Float.MAX_VALUE
+                var pyBox = Float.MAX_VALUE
+                for (col in prof.indices) {
+                    val gy = sim.groundAt(x0 + col)
+                    if (prof[col] >= 0) pyHonest = min(pyHonest, gy - prof[col])
+                    pyBox = min(pyBox, gy - Tune.PLANE_H)
+                }
+                val early = pyHonest - pyBox
+                if (early > worstEarly) { worstEarly = early; worstAt = x0 }
+                if (pyHonest < pyBox) honestIsLate++
+
+                // and the honest test must be exact: one notch higher, no
+                // drawn pixel is in the earth at all.
+                val py = pyHonest - 0.02f
+                var overlap = false
+                for (col in prof.indices) {
+                    if (prof[col] < 0) continue
+                    if (py + prof[col] >= sim.groundAt(x0 + col)) overlap = true
+                }
+                if (overlap) honestIsLate++
+            }
+        }
+        note(String.format(
+            "flat-box model killed up to %.2f rows early (worst at worldX %.0f)",
+            worstEarly, worstAt))
+        check("A15 old flat-box model really was killing early", worstEarly > 1f,
+            String.format("%.2f rows of visible daylight", worstEarly))
+        check("A15 collision fires on drawn-pixel contact, not before",
+            honestIsLate == 0, "$honestIsLate of 18000 poses")
+
+        // ---- the wreck comes to rest ON the surface, not in it ------------
+        var rested = false; var clr = -1f
+        for (seed in 0 until 40) {
+            val s = Sim(MemStore()); s.start()
+            var t = 0
+            while (t < 40000 && !s.gameOver) {
+                s.climbing = t % 400 < (seed % 7)   // mostly nose-down
+                s.update(1f); t++
+            }
+            if (s.crashCause != "GROUND") continue
+            val prof = s.bottomProfile(s.planeSprite())
+            val x0 = s.camX + Art.PLAYER_X
+            var minGap = Float.MAX_VALUE
+            for (col in prof.indices) {
+                if (prof[col] < 0) continue
+                minGap = min(minGap, s.groundAt(x0 + col) - (s.py + prof[col]))
+            }
+            rested = true; clr = minGap; break
+        }
+        note(String.format("wreck settles %.2f rows clear of the surface", clr))
+        check("A15 a ground kill settles the wreck on the surface",
+            rested && clr >= 0f && clr <= 1.01f,
+            if (rested) String.format("%.2f rows", clr) else "no GROUND death sampled")
+
+        // ---- GAME OVER actually stops the game ----------------------------
+        val s = Sim(MemStore()); s.start()
+        var t = 0
+        while (t < 40000 && !s.gameOver) { s.climbing = false; s.update(1f); t++ }
+        check("A15 running out of lives ends the run", s.gameOver && s.crashed,
+            "lives=${s.lives}")
+        val camAtDeath = s.camX
+        // `wait` is the FIRST tick on which a tap would be taken, so this
+        // one number proves nothing was accepted before it.
+        var wait = 0
+        while (!s.canRestart() && wait < 600) { s.update(1f); wait++ }
+        note("tap accepted after $wait ticks (" +
+            String.format("%.2f", wait / 60f) + "s)")
+        check("A15 no tap is accepted before the card can be read",
+            wait >= Tune.GAMEOVER_LOCKOUT.toInt(), "$wait ticks")
+        check("A15 the world is frozen while GAME OVER holds",
+            s.camX == camAtDeath, "camX drifted ${s.camX - camAtDeath}")
+        // and it does eventually accept - a lockout that never lifts is worse
+        check("A15 the lockout does lift", s.canRestart(), "after $wait ticks")
+    }
+
+    // =====================================================================
+    //  A16  the day/night cycle must be content, not decoration
+    // =====================================================================
+    private fun a16CycleIsReachable() {
+        // The night palette inverts the whole scene - solid earth becomes
+        // pale, features are outlined, the plane reads as a hole in the
+        // light. It is the best-looking thing in the game, and for two
+        // revisions it was unreachable: at PHASE_LEN 2600 night began at
+        // 10400 rows, at 900 it began at 3600, and nobody flies that far.
+        // Dead content is invisible in playtesting - you simply never hear
+        // about the thing nobody saw. So it gets a number.
+        val reaches = ArrayList<Int>()
+        var sawNight = 0; var sawDusk = 0
+        val biases = listOf(0f, 3f, 6f, 9f, 12f, 16f, 20f, 26f)
+        for (b in biases) {
+            val s = TestPilot.sortie(b)
+            reaches.add(s.distance.toInt())
+            if (s.camX >= Tune.PHASE_LEN * 4) sawNight++
+            if (s.camX >= Tune.PHASE_LEN * 2) sawDusk++
+        }
+        reaches.sort()
+        val best = reaches.last()
+        val median = reaches[reaches.size / 2]
+        note("competent pilot reaches " +
+            "${reaches.first()}..$best rows (median $median)")
+        note(String.format("night begins at %.0f rows, a full cycle is %.0f",
+            Tune.PHASE_LEN * 4, Tune.PHASE_LEN * 5))
+        check("A16 a competent sortie sees dusk", sawDusk == biases.size,
+            "$sawDusk/${biases.size} sorties")
+        check("A16 a competent sortie reaches night", sawNight * 2 >= biases.size,
+            "$sawNight/${biases.size} sorties")
+        check("A16 the whole cycle fits inside a good run",
+            Tune.PHASE_LEN * 5 <= best, "cycle ${(Tune.PHASE_LEN * 5).toInt()} rows " +
+            "vs best sortie $best")
+        // ...and not so short that the palette strobes: a phase must last
+        // at least a few seconds at full dive speed.
+        val phaseSecs = Tune.PHASE_LEN / (Tune.SPEED_MAX * 60f)
+        note(String.format("shortest a phase can pass: %.1fs at full dive", phaseSecs))
+        check("A16 a phase is not a flicker", phaseSecs >= 5f,
+            String.format("%.1fs", phaseSecs))
+    }
+
+    // =====================================================================
     @JvmStatic
     fun main(args: Array<String>) {
         println("=".repeat(78))
@@ -543,6 +680,8 @@ object Audit {
         a12Lives()
         a13CeilingIsNotSafe()
         a14ScoutsAreDodgeable()
+        a15GroundHonesty()
+        a16CycleIsReachable()
         println("=".repeat(78))
         println("${failures.size} checks failed")
         if (failures.isNotEmpty()) {

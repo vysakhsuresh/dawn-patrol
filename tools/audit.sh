@@ -4,5 +4,5 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KT="${DAWNPATROL_KT:-$HOME/.dawnpatrol-kt}"
 O=$(mktemp -d)
-"$ROOT/tools/build.sh" "$O" "$ROOT/tools/Audit.kt"
+"$ROOT/tools/build.sh" "$O" "$ROOT/tools/TestPilot.kt" "$ROOT/tools/Audit.kt"
 java -cp "$O:$KT/kotlin-stdlib.jar" com.dawnpatrol.game.Audit

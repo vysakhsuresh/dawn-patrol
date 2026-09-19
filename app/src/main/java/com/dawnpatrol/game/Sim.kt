@@ -210,6 +210,13 @@ class Sim(private val store: Store) {
         gunTimers.clear()
     }
 
+    /**
+     * Is the end-of-run card ready to accept a tap? The lockout is what makes
+     * GAME OVER actually stop the game rather than blink past.
+     */
+    fun canRestart(): Boolean =
+        crashed && crashTicks >= Tune.GAMEOVER_LOCKOUT
+
     /** First touch: the aeroplane stops loitering and the sortie begins. */
     fun start() {
         if (started) return
@@ -239,6 +246,37 @@ class Sim(private val store: Store) {
     fun slotKeyAt(worldX: Double): Int = World.cell(worldX, Art.SLOT_W.toDouble())
 
     fun isDead(k: Int) = destroyed.contains(k)
+
+    /**
+     * The attitude actually drawn. Collision reads the SAME sprite, so the
+     * shape you can see is the shape that can hit things.
+     */
+    fun planeSprite(): Array<String> = when {
+        vy < -0.15f -> Art.SPR_PLANE_CLIMB
+        vy > 0.15f -> Art.SPR_PLANE_DIVE
+        else -> Art.SPR_PLANE
+    }
+
+    /**
+     * Lowest drawn pixel in each column of a sprite, or -1 for an empty
+     * column.
+     *
+     * The old ground test used one flat bottom edge across the full 22-column
+     * box. But the bottom row of the plane is only the WHEELS - at the nose
+     * and tail the lowest drawn pixel is three rows higher. So the box hung
+     * below the artwork at both ends and you died with visible daylight under
+     * the aeroplane. Per-column is the honest shape.
+     */
+    private val bottomProfiles = HashMap<Array<String>, IntArray>()
+
+    fun bottomProfile(spr: Array<String>): IntArray = bottomProfiles.getOrPut(spr) {
+        val w = spr.maxOf { it.length }
+        IntArray(w) { col ->
+            var lowest = -1
+            for (r in spr.indices) if (col < spr[r].length && spr[r][col] == 'X') lowest = r
+            lowest
+        }
+    }
 
     /** Altitude above the ground directly below, in rows. */
     fun altitude(): Float = groundAt(camX + Art.PLAYER_X) - (py + Tune.PLANE_H)
@@ -758,14 +796,25 @@ class Sim(private val store: Store) {
         val x1 = x0 + Tune.PLANE_W
         val bottom = py + Tune.PLANE_H
 
-        // Sample across the whole span, not just one column: the nose can
-        // meet a rising parapet before the tail does.
-        var xx = x0
-        while (xx <= x1) {
-            if (bottom >= groundAt(xx)) { die("GROUND"); return }
-            xx += 3.0
+        // Column by column against the sprite's real underside, so the wheels
+        // touch the mud at the moment the wheels touch the mud.
+        val spr = planeSprite()
+        val prof = bottomProfile(spr)
+        var touched = false
+        var rest = Float.MAX_VALUE
+        for (col in prof.indices) {
+            val b = prof[col]
+            if (b < 0) continue
+            val gy = groundAt(x0 + col)
+            if (py + b >= gy) touched = true
+            rest = min(rest, gy - b - 1f)
         }
-        if (bottom >= groundAt(x1)) { die("GROUND"); return }
+        if (touched) {
+            // settle the wreck onto the surface instead of leaving it buried
+            if (rest < Float.MAX_VALUE) py = min(py, rest)
+            die("GROUND")
+            return
+        }
 
         // balloon envelopes and their cables
         for (sl in slotBuf) {
