@@ -36,6 +36,7 @@ class MemStore : Store {
 const val K_BULLET = 0
 const val K_BOMB = 1
 const val K_SHELL = 2
+const val K_EBULLET = 3
 
 class Shot {
     var alive = false
@@ -53,6 +54,14 @@ class Burst {
     var span = 0f          // ticks it stays on screen
     var lethal = 0f        // ticks it can still kill
     var r = 0f
+}
+
+/** An enemy scout. The answer to "nothing can reach me up high". */
+class Enemy {
+    var alive = false
+    var x = 0f; var y = 0f
+    var vx = 0f; var vy = 0f
+    var fireTimer = 0f
 }
 
 /** A floating "+n" that rises off a kill - the feedback that makes a hit land. */
@@ -98,6 +107,13 @@ class Sim(private val store: Store) {
     var score = 0; private set
     var bestScore = 0; private set
 
+    // ---- lives ----------------------------------------------------------------
+    var lives = Tune.LIVES; private set
+    var gameOver = false; private set
+    var invuln = 0f; private set
+    var lifeFlash = 0f; private set      // ticks the "LIFE LOST" banner holds
+    var lastLoss = ""; private set
+
     // ---- the line ---------------------------------------------------------
     var linePct = Tune.LINE_START; private set
     var lineDelta = 0f; private set   // this sortie only, for the end card
@@ -116,6 +132,8 @@ class Sim(private val store: Store) {
     val shots = Array(72) { Shot() }
     val bursts = Array(24) { Burst() }
     val pips = Array(12) { Pip() }
+    val enemies = Array(8) { Enemy() }
+    private var enemyTimer = 0f
 
     // ---- AA bookkeeping ------------------------------------------------------
     private val gunTimers = HashMap<Int, Float>()
@@ -176,6 +194,13 @@ class Sim(private val store: Store) {
         lineDelta = 0f
         score = 0
         started = false
+        lives = Tune.LIVES
+        gameOver = false
+        invuln = 0f
+        lifeFlash = 0f
+        lastLoss = ""
+        enemyTimer = Tune.ENEMY_PERIOD
+        for (e in enemies) e.alive = false
         killsAA = 0; killsDepot = 0; killsTank = 0; killsBalloon = 0
         lockTicks = 0f
         ticks = 0f
@@ -231,6 +256,10 @@ class Sim(private val store: Store) {
     }
 
     fun isNight(): Boolean = phase() >= 4f
+
+    /** 0 at the start of a sortie, 1 once the front is fully awake. */
+    fun threat(): Float =
+        ((distance - Tune.WARMUP_ROWS) / Tune.RAMP_ROWS).coerceIn(0f, 1f)
 
     // =====================================================================
     //  update
@@ -291,8 +320,12 @@ class Sim(private val store: Store) {
             fireGun()
         }
 
+        if (invuln > 0f) invuln -= dt
+        if (lifeFlash > 0f) lifeFlash -= dt
+
         stepShots(dt); stepBursts(dt); stepPips(dt)
         stepAA(dt)
+        stepEnemies(dt)
         stepSearchlight(dt)
         checkTerrain()
     }
@@ -331,6 +364,7 @@ class Sim(private val store: Store) {
             if (!s.alive) continue
             when (s.kind) {
                 K_BULLET -> s.vy += Tune.GUN_DROP * dt
+                K_EBULLET -> { }
                 K_BOMB -> s.vy += Tune.BOMB_GRAV * dt
                 K_SHELL -> {
                     s.fuse -= dt
@@ -342,6 +376,19 @@ class Sim(private val store: Store) {
             s.life -= dt
             if (s.life <= 0f) { s.alive = false; continue }
             if (s.x < camX - 40 || s.x > camX + Art.GW + 60) { s.alive = false; continue }
+
+            if (s.kind == K_EBULLET) {
+                if (invuln <= 0f && !crashed &&
+                    boxHitsPlane(s.x - 1f, s.y - 1f, 2f, 2f)) {
+                    s.alive = false
+                    hit("SCOUT")
+                    continue
+                }
+                if (s.y >= groundAt(s.x.toDouble())) s.alive = false
+                continue
+            }
+
+            if (s.kind == K_BULLET && hitEnemy(s)) { s.alive = false; continue }
 
             if (s.kind == K_BULLET || s.kind == K_BOMB) {
                 if (hitSomething(s)) { s.alive = false; continue }
@@ -357,6 +404,25 @@ class Sim(private val store: Store) {
                 }
             }
         }
+    }
+
+    private fun hitEnemy(s: Shot): Boolean {
+        for (e in enemies) {
+            if (!e.alive) continue
+            if (s.x > e.x - 2f && s.x < e.x + Tune.PLANE_W &&
+                s.y > e.y - 2f && s.y < e.y + Tune.PLANE_H + 2f) {
+                e.alive = false
+                val earned = Tune.PTS_ENEMY * mult
+                score += earned
+                detonate(e.x + 8f, e.y + 4f, 8f, false)
+                freePip()?.let {
+                    it.alive = true; it.x = e.x; it.y = e.y - 8f; it.age = 0f
+                    it.text = "+" + earned
+                }
+                return true
+            }
+        }
+        return false
     }
 
     /** Bullets/bombs vs standing targets (AA, tanks, searchlights, balloons). */
@@ -447,7 +513,7 @@ class Sim(private val store: Store) {
             b.age += dt
             if (b.lethal > 0f) {
                 b.lethal -= dt
-                if (!crashed && burstHitsPlane(b)) die("FLAK")
+                if (!crashed && invuln <= 0f && burstHitsPlane(b)) hit("FLAK")
             }
             if (b.age >= b.span) b.alive = false
         }
@@ -501,7 +567,8 @@ class Sim(private val store: Store) {
             if (timer <= 0f && range >= Tune.MIN_ENGAGE && range <= Tune.MAX_ENGAGE) {
                 if (fireShell(gx, gy, px, pyC, k)) {
                     val j = ((World.hash32(k * 977 + ticks.toInt()) and 0xFFFFu).toFloat() / 65535f)
-                    timer = Tune.AA_PERIOD + j * Tune.AA_PERIOD_JITTER
+                    val period = Tune.AA_PERIOD * (1f - 0.42f * threat())
+                    timer = period + j * Tune.AA_PERIOD_JITTER
                 } else {
                     timer = 8f   // blocked by the fuse-separation rule; retry soon
                 }
@@ -566,6 +633,80 @@ class Sim(private val store: Store) {
         sh.fuse = t
         sh.life = t + 6f
         return true
+    }
+
+    // ---- enemy scouts ------------------------------------------------------------
+    private fun stepEnemies(dt: Float) {
+        if (distance > Tune.WARMUP_ROWS) {
+            enemyTimer -= dt
+            if (enemyTimer <= 0f) {
+                val period = Tune.ENEMY_PERIOD +
+                    (Tune.ENEMY_PERIOD_MIN - Tune.ENEMY_PERIOD) * threat()
+                val j = ((World.hash32(ticks.toInt() * 31 + 7) and 0xFFFFu).toFloat() / 65535f)
+                enemyTimer = period * (0.7f + 0.6f * j)
+                spawnEnemy()
+            }
+        }
+        val pxc = (camX + Art.PLAYER_X + Tune.PLANE_W / 2f).toFloat()
+        val pyc = py + Tune.PLANE_H / 2f
+        for (e in enemies) {
+            if (!e.alive) continue
+            // steer gently toward the player's altitude: there is no longer
+            // an altitude that nothing can reach
+            val want = ((pyc - e.y) * Tune.ENEMY_TRACK)
+                .coerceIn(-Tune.ENEMY_VY, Tune.ENEMY_VY)
+            e.vy += (want - e.vy) * 0.08f * dt
+            e.x += e.vx * dt
+            e.y += e.vy * dt
+            e.y = e.y.coerceIn(Tune.CEIL_ROW, groundAt(e.x.toDouble()) - Tune.PLANE_H - 2f)
+
+            e.fireTimer -= dt
+            val lead = e.x - pxc
+            if (e.fireTimer <= 0f && lead > 16f && lead < 74f) {
+                e.fireTimer = Tune.ENEMY_FIRE_PERIOD
+                fireEnemyBullet(e, pxc, pyc)
+            }
+
+            if (e.x < camX - 24) { e.alive = false; continue }
+            if (invuln <= 0f && !crashed && boxHitsPlane(e.x, e.y, Tune.PLANE_W.toFloat(),
+                    Tune.PLANE_H.toFloat())) {
+                e.alive = false
+                detonate(e.x, e.y, 9f, false)
+                hit("COLLISION")
+            }
+        }
+    }
+
+    private fun spawnEnemy() {
+        val e = enemies.firstOrNull { !it.alive } ?: return
+        e.alive = true
+        e.x = (camX + Art.GW + 14).toFloat()
+        // enter near the player's band so it is visible on approach
+        val h = World.hash32(ticks.toInt() * 7919 + 3)
+        val off = (((h shr 5) and 0x3Fu).toInt() - 32) * 0.8f
+        e.y = (py + off).coerceIn(Tune.CEIL_ROW + 2f,
+            groundAt(e.x.toDouble()) - Tune.PLANE_H - 6f)
+        e.vx = -Tune.ENEMY_SPEED
+        e.vy = 0f
+        e.fireTimer = Tune.ENEMY_FIRE_PERIOD * 0.6f
+    }
+
+    private fun fireEnemyBullet(e: Enemy, pxc: Float, pyc: Float) {
+        val s = freeShot() ?: return
+        val dx = pxc - e.x; val dy = pyc - e.y
+        val d = sqrt(dx * dx + dy * dy)
+        if (d < 1f) return
+        s.alive = true; s.kind = K_EBULLET
+        s.x = e.x; s.y = e.y + 4f
+        s.vx = dx / d * Tune.EBULLET_SPEED - speed * 0.25f
+        s.vy = dy / d * Tune.EBULLET_SPEED
+        s.life = 150f
+    }
+
+    private fun boxHitsPlane(x: Float, y: Float, w: Float, h: Float): Boolean {
+        val ax0 = (camX + Art.PLAYER_X).toFloat(); val ax1 = ax0 + Tune.PLANE_W
+        val ay0 = py; val ay1 = py + Tune.PLANE_H
+        return x < ax1 && x + w > ax0 && y < ay1 && y + h > ay0
     }
 
     // ---- searchlights -----------------------------------------------------------
@@ -644,16 +785,48 @@ class Sim(private val store: Store) {
         }
     }
 
-    private fun die(cause: String) {
-        if (crashed) return
-        crashed = true
-        crashCause = cause
-        crashTicks = 0f
+    /**
+     * Take a lethal hit. Costs a life, not automatically the run.
+     *
+     * Losing a life keeps the world, the score and the wrecks you have made
+     * - you lose a machine and get put back in the air with a moment of
+     * grace. Only running out of machines ends the sortie.
+     */
+    private fun hit(cause: String) {
+        if (crashed || invuln > 0f) return
         detonate((camX + Art.PLAYER_X + 11).toFloat(), py + 4f, 11f, false)
-        if (distance > best) best = distance
-        if (score > bestScore) bestScore = score
-        save()
+        lives--
+        lastLoss = cause
+        lifeFlash = Tune.LIFE_FLASH
+        if (lives <= 0) {
+            lives = 0
+            crashed = true
+            gameOver = true
+            crashCause = cause
+            crashTicks = 0f
+            if (distance > best) best = distance
+            if (score > bestScore) bestScore = score
+            save()
+        } else {
+            respawn()
+        }
     }
+
+    private fun respawn() {
+        py = (groundAt(camX + Art.PLAYER_X) - Tune.RESPAWN_ALT)
+            .coerceAtLeast(Tune.CEIL_ROW + 6f)
+        vy = 0f
+        invuln = Tune.INVULN
+        mult = 1
+        lowTicks = 0f
+        // do not put the player back into the middle of an attack they
+        // cannot see the start of
+        for (s in shots) if (s.kind == K_SHELL || s.kind == K_EBULLET) s.alive = false
+        for (b in bursts) b.lethal = 0f
+        for (e in enemies) if (e.x - camX < Art.GW) e.alive = false
+    }
+
+    private fun die(cause: String) = hit(cause)
 
     companion object {
         const val FUSE_SEP = 15f    // ticks: minimum gap between lethal bursts

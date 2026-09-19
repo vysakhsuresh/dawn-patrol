@@ -18,10 +18,10 @@ object Art {
     const val GH = 175
 
     // ---- world layout (pixel-grid rows) ---------------------------------
-    const val HUD_H = 15
-    const val SKY_TOP = 15
+    const val HUD_H = 20
+    const val SKY_TOP = 20
     const val HORIZON = 126
-    const val CEILING = 19
+    const val CEILING = 24
     const val PLAYER_X = 26
 
     // ---- flight model (per 60Hz frame, pixel-grid units) ----------------
@@ -164,6 +164,13 @@ object Art {
         "XXXXXXXXXXXXXXXX",
         ".XXXXXXXXXXXXXX.",
         "..XXXXXXXXXXXX.."
+    )
+
+    // tiny roundel for the lives row
+    val SPR_LIFE = arrayOf(
+        "..X..",
+        "XXXXX",
+        "..X.."
     )
 
     val SPR_BOMB = arrayOf(

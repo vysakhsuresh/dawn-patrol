@@ -111,10 +111,12 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
 
     private fun step(dt: Float) {
         val wasCrashed = sim.crashed
+        val livesBefore = sim.lives
         val burstsBefore = countBursts()
 
         sim.update(dt)
 
+        if (sim.lives < livesBefore) sound.playHit()
         if (!wasCrashed && sim.crashed) sound.playHit()
         if (countBursts() > burstsBefore) sound.playThud()
 

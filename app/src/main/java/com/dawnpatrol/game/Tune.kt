@@ -47,7 +47,7 @@ object Tune {
     const val PLANE_W = 22
     const val PLANE_H = 9
 
-    const val CEIL_ROW = 19f          // hard ceiling, just under the HUD
+    const val CEIL_ROW = 24f          // hard ceiling, just under the HUD
 
     // ---- guns -----------------------------------------------------------
     const val GUN_PERIOD = 6f         // ticks between rounds while held
@@ -133,6 +133,34 @@ object Tune {
     // inverted palette would have been dead content. 900 puts a full cycle
     // at roughly 80 seconds, so a decent run actually flies into darkness.
     const val PHASE_LEN = 900f        // rows of world per phase
+
+    // ---- lives ---------------------------------------------------------
+    // One hit ending the whole run gave no room to learn and no moment to
+    // register WHY you died. Three lives, a visible loss, and a respawn in
+    // place - you keep the world and the score you earned, you just lose a
+    // machine. Only running out ends the run.
+    const val LIVES = 3
+    const val INVULN = 110f           // ticks of grace after a respawn
+    const val LIFE_FLASH = 70f        // ticks the "LIFE LOST" banner holds
+    const val RESPAWN_ALT = 46f       // rows above ground to put you back
+
+    // ---- enemy scouts ----------------------------------------------------
+    // The fix for "nothing can touch me up high". Flak is a ground weapon
+    // and physically cannot reach the ceiling, which made cruising at the
+    // top a safe, scoreless, boring optimum. Scouts come to YOU: they drift
+    // toward your altitude, so there is no longer anywhere to hide.
+    const val ENEMY_SPEED = 0.30f     // rows/tick, closing on top of your own
+    const val ENEMY_VY = 0.30f        // how fast they match your altitude
+    const val ENEMY_TRACK = 0.010f    // how hard they steer - gentle on purpose
+    const val ENEMY_PERIOD = 460f     // ticks between scouts at zero threat
+    const val ENEMY_PERIOD_MIN = 170f // ...and at full threat
+    const val ENEMY_FIRE_PERIOD = 66f
+    const val EBULLET_SPEED = 1.35f   // slow enough to read and dodge
+    const val PTS_ENEMY = 220
+
+    // ---- difficulty ramp ---------------------------------------------------
+    // Flat difficulty means the first minute and the tenth feel identical.
+    const val RAMP_ROWS = 2600f       // rows over which threat goes 0 -> 1
 
     // ---- scoring -----------------------------------------------------------
     // Shown to the player on the briefing card, so these ARE the contract.

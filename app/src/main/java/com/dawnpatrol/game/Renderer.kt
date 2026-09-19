@@ -80,6 +80,7 @@ class Renderer {
         features(sim, night)
         smoke(sim)
         if (night) beams(sim)
+        enemies(sim, night)
         projectiles(sim)
         bursts(sim)
         // The full briefing covers the sky, and the text plates punch holes
@@ -339,6 +340,39 @@ class Renderer {
         }
     }
 
+    // ---- enemy scouts -----------------------------------------------------------
+    private fun enemies(sim: Sim, night: Boolean) {
+        for (e in sim.enemies) {
+            if (!e.alive) continue
+            val x = (e.x - sim.camX).toFloat()
+            if (x < -26f || x > Art.GW + 26f) continue
+            val spr = Art.SPR_PLANE
+            val gx = x.toInt(); val gy = e.y.toInt()
+            // mirrored, so an enemy reads instantly as coming the other way
+            for (j in spr.indices) {
+                val row = spr[j]
+                for (i in row.indices) {
+                    if (row[i] != 'X') continue
+                    fb.set(gx + (row.length - 1 - i), gy + j, 0)
+                }
+            }
+            for (j in spr.indices) {
+                val row = spr[j]
+                for (i in row.indices) {
+                    if (row[i] != 'X') continue
+                    for (dy in -1..1) for (dx in -1..1)
+                        fb.set(gx + (row.length - 1 - i) + dx, gy + j + dy, 0)
+                }
+            }
+            for (j in spr.indices) {
+                val row = spr[j]
+                for (i in row.indices) {
+                    if (row[i] == 'X') fb.set(gx + (row.length - 1 - i), gy + j, 1)
+                }
+            }
+        }
+    }
+
     // ---- projectiles / bursts ------------------------------------------------------
     private fun projectiles(sim: Sim) {
         for (s in sim.shots) {
@@ -347,6 +381,11 @@ class Renderer {
             val y = s.y
             when (s.kind) {
                 K_BULLET -> fb.line(x, y, x - 4f, y - 1.2f, 1, 0)
+                K_EBULLET -> {
+                    // fatter than your own tracer, so incoming reads as incoming
+                    fb.line(x, y, x + 4f, y - s.vy * 2.6f, 1, 0)
+                    fb.set(x.toInt(), y.toInt() + 1, 1)
+                }
                 K_BOMB -> fb.sprite(Art.SPR_BOMB, x.toInt(), y.toInt(), 1)
                 K_SHELL -> {
                     // a shell is a telegraph: you must be able to see it coming
@@ -431,6 +470,12 @@ class Renderer {
             fb.sprite(spr, gx, gy, 0)
             return
         }
+        // blink through the grace period so it is obvious you are briefly safe
+        if (sim.invuln > 0f && ((sim.ticks / 4f).toInt() and 1) == 0) {
+            fb.spriteClear(spr, gx, gy, 1, 0)
+            fb.spriteOutline(spr, gx, gy, 1)
+            return
+        }
         fb.spriteClear(spr, gx, gy, 1, 0)
         fb.sprite(spr, gx, gy, 1)
     }
@@ -447,15 +492,19 @@ class Renderer {
         val sc = sim.score.toString()
         fb.text(sc, Art.GW - 3 - Fb.textW(sc), 2, paper)
 
-        // bombs remaining, as icons - diegetic and instantly countable
-        val bw = sim.bombs * 4
-        val bx = (Art.GW - bw) / 2 + 4
-        for (i in 0 until sim.bombs) {
-            fb.sprite(Art.SPR_BOMB, bx + i * 4, 2, paper)
+        // lives, left - machines you have left, countable at a glance
+        for (i in 0 until sim.lives) {
+            fb.sprite(Art.SPR_LIFE, 3 + i * 7, 9, paper)
         }
 
-        // front line meter: the actual objective
-        val mx = 4; val mw = Art.GW - 8; val my = 8; val mh = 4
+        // bombs remaining, right - diegetic and instantly countable
+        val bx = Art.GW - 3 - sim.bombs * 4
+        for (i in 0 until sim.bombs) {
+            fb.sprite(Art.SPR_BOMB, bx + i * 4, 8, paper)
+        }
+
+        // front line meter: the long-term objective
+        val mx = 4; val mw = Art.GW - 8; val my = 15; val mh = 3
         fb.frameRect(mx, my, mw, mh, paper)
         val fill = ((mw - 2) * sim.linePct).toInt()
         for (i in 0 until mw - 2) {
@@ -463,8 +512,8 @@ class Renderer {
             fb.dpx(mx + 1 + i, my + 1, lv, paper)
             fb.dpx(mx + 1 + i, my + 2, lv, paper)
         }
-        fb.vline(mx + 1 + fill, my - 2, my + mh + 1, paper)
-        for (x in 0 until Art.GW step 2) fb.set(x, Art.HUD_H - 2, paper)
+        fb.vline(mx + 1 + fill, my - 1, my + mh, paper)
+        for (x in 0 until Art.GW step 2) fb.set(x, Art.HUD_H - 1, paper)
 
         // greed meter - only shows when it is actually earning
         if (sim.mult > 1) {
@@ -481,6 +530,18 @@ class Renderer {
         if (!sim.started && !sim.crashed) {
             if (sim.showFullBriefing) briefing(sim) else startPrompt(sim)
         }
+
+        // A life going missing from the HUD is not enough on its own - the
+        // player is looking at the aeroplane, not the corner. Say it loudly.
+        if (sim.lifeFlash > 0f && !sim.crashed) {
+            val b = "HIT - " + sim.lastLoss
+            val w = Fb.textW(b, 1, 2)
+            fb.plateText(b, (Art.GW - w) / 2, 56, 1, 1, 2, 3)
+            val l = if (sim.lives == 1) "1 MACHINE LEFT"
+                    else sim.lives.toString() + " MACHINES LEFT"
+            fb.plateText(l, (Art.GW - Fb.textW(l)) / 2, 72, 1, 1, 1, 2)
+        }
+
         if (sim.crashed) crashCard(sim)
     }
 
@@ -567,7 +628,7 @@ class Renderer {
     }
 
     private fun crashCard(sim: Sim) {
-        val title = "SHOT DOWN"
+        val title = if (sim.gameOver) "GAME OVER" else "SHOT DOWN"
         val tw = Fb.textW(title, 2, 2)
         fb.plateText(title, (Art.GW - tw) / 2, 36, 1, 2, 2, 3)
         val lines = listOf(
@@ -585,7 +646,7 @@ class Renderer {
             y += 8
         }
         if (((sim.crashTicks / 20f).toInt() and 1) == 0) {
-            val s = "TAP TO SCRAMBLE"
+            val s = if (sim.gameOver) "TAP TO FLY AGAIN" else "TAP TO SCRAMBLE"
             fb.plateText(s, (Art.GW - Fb.textW(s)) / 2, 152, 1, 1, 1, 2)
         }
     }

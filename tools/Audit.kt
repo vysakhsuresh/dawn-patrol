@@ -438,6 +438,92 @@ object Audit {
     }
 
     // =====================================================================
+    //  A12  lives actually work
+    // =====================================================================
+    private fun a12Lives() {
+        val sim = Sim(MemStore())
+        sim.reset(); sim.start()
+        var t = 0
+        var seenLives = sim.lives
+        var respawnedSafely = true
+        var everInvuln = false
+        // suicidal pilot: never climbs, so it hits the deck repeatedly
+        while (t < 30000 && !sim.gameOver) {
+            sim.climbing = false
+            sim.update(1f)
+            if (sim.lives < seenLives) {
+                seenLives = sim.lives
+                // The last life has no respawn to be safe about - only the
+                // ones that put you back in the air need grace and altitude.
+                if (!sim.gameOver) {
+                    if (sim.invuln <= 0f) respawnedSafely = false
+                    if (sim.altitude() < 10f) respawnedSafely = false
+                }
+            }
+            if (sim.invuln > 0f) everInvuln = true
+            t++
+        }
+        check("A12 losing a life does not end the run", sim.lives == 0 && sim.gameOver,
+            "burned through ${Tune.LIVES} machines then game over")
+        check("A12 respawn is safe and has grace", respawnedSafely && everInvuln,
+            "put back at altitude with ${Tune.INVULN.toInt()} ticks of invulnerability")
+    }
+
+    // =====================================================================
+    //  A13  the sky is no longer a safe hiding place
+    // =====================================================================
+    private fun a13CeilingIsNotSafe() {
+        // A pilot pinned to the ceiling used to be untouchable: flak is a
+        // ground weapon and cannot reach. Scouts must be able to.
+        var threatened = 0
+        for (seed in 0 until 6) {
+            val sim = Sim(MemStore())
+            sim.reset(); sim.start()
+            var t = 0
+            var sawScoutClose = false
+            while (t < 24000 && !sim.gameOver) {
+                sim.climbing = sim.py > Tune.CEIL_ROW + 2f   // hug the ceiling
+                sim.update(1f)
+                for (e in sim.enemies) {
+                    if (!e.alive) continue
+                    val dx = abs(e.x - (sim.camX + Art.PLAYER_X).toFloat())
+                    val dy = abs(e.y - sim.py)
+                    if (dx < 40f && dy < 16f) sawScoutClose = true
+                }
+                t++
+            }
+            if (sawScoutClose) threatened++
+        }
+        check("A13 scouts reach a ceiling-hugging pilot", threatened >= 5,
+            "$threatened/6 ceiling runs were engaged")
+    }
+
+    // =====================================================================
+    //  A14  a scout is always avoidable
+    // =====================================================================
+    private fun a14ScoutsAreDodgeable() {
+        // A scout closes at its own speed plus yours. From the moment it
+        // appears at the screen edge, a full-authority pitch change must
+        // clear its box before it arrives.
+        val closing = Tune.ENEMY_SPEED + Tune.SPEED_MAX
+        val runway = (Art.GW - Art.PLAYER_X - Tune.PLANE_W).toFloat()
+        val ticks = runway / closing
+        // vertical separation reachable in that time, worst case from a
+        // standing start, against a scout that is also steering toward you
+        var v = 0f; var y = 0f; var t = 0f
+        while (t < ticks) {
+            v = (v - Tune.CLIMB_ACC).coerceIn(-Tune.VY_MAX_UP, Tune.VY_MAX_DN)
+            y += v; t += 1f
+        }
+        val reach = abs(y) - Tune.ENEMY_VY * ticks   // scout closes some of it
+        val need = Tune.PLANE_H.toFloat()
+        note(String.format("scout warning: %.0f rows of runway, %.1f ticks (%.2fs)",
+            runway, ticks, ticks / 60f))
+        check("A14 a scout can always be out-climbed", reach > need,
+            String.format("%.1f rows of separation vs %d needed", reach, Tune.PLANE_H))
+    }
+
+    // =====================================================================
     @JvmStatic
     fun main(args: Array<String>) {
         println("=".repeat(78))
@@ -454,6 +540,9 @@ object Audit {
         a9Feel()
         a10Soak()
         a11Warmup()
+        a12Lives()
+        a13CeilingIsNotSafe()
+        a14ScoutsAreDodgeable()
         println("=".repeat(78))
         println("${failures.size} checks failed")
         if (failures.isNotEmpty()) {

@@ -125,6 +125,33 @@ object FrameDump {
             println("frame4 cause=${sim.crashCause} rows=${sim.distance.toInt()}")
         }
 
+        // ---- 6  a scout attack: the answer to "nothing reaches me high" ---
+        run {
+            val sim = Sim(MemStore())
+            sim.start()
+            fly(sim, 400000, { s, _ ->
+                s.climbing = s.py > Tune.CEIL_ROW + 6f     // cruise high
+                s.firing = true
+            }, { s, _ ->
+                !s.crashed && s.enemies.any { e ->
+                    e.alive && e.x - s.camX < Art.GW - 8 && e.x - s.camX > 40
+                }
+            })
+            r.render(sim)
+            write(r, r.palette(sim.phase()), "$dir/f6_scout.ppm")
+            println("frame6 scouts=" + sim.enemies.count { it.alive })
+        }
+
+        // ---- 7  the moment a life is lost ---------------------------------
+        run {
+            val sim = Sim(MemStore())
+            sim.start()
+            fly(sim, 400000, { s, _ -> s.climbing = false }, { s, _ -> s.lifeFlash > 20f })
+            r.render(sim)
+            write(r, r.palette(sim.phase()), "$dir/f7_lifelost.ppm")
+            println("frame7 lives=" + sim.lives + " cause=" + sim.lastLoss)
+        }
+
         // ---- 5  a dusk pass, to show the palette cycle --------------------
         run {
             val sim = Sim(MemStore())

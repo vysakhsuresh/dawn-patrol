@@ -3,9 +3,10 @@
 A WW1-era aerial war game in 1-bit pixel art. Side view, portrait, one screen,
 no menus. The battlefield below is alive; you are one aircraft passing over it.
 
-**Status: playable.** Core loop, anti-aircraft fire, bombs and guns, a
-persistent front line, barrage balloons, searchlights, and a day/night cycle —
-all compiled, audited and rendered from the shipped Kotlin.
+**Status: playable.** Three lives, anti-aircraft fire, enemy scouts, bombs and
+guns, a persistent front line, barrage balloons, searchlights, a difficulty
+ramp and a day/night cycle — all compiled, audited and rendered from the
+shipped Kotlin.
 
 ## The game
 
@@ -31,7 +32,18 @@ briefing card with the controls and what everything is worth.
 | searchlight | 130 |
 | AA gun | 110 |
 
-All multiplied by your greed multiplier, up to ×9.
+All multiplied by your greed multiplier, up to ×9. Enemy scouts are worth 220.
+
+**Three machines.** A hit costs you one, not the run — you keep the world, the
+score and every wreck you have made, and you are put back in the air with a
+moment of invulnerability. The HUD shows what you have left, and a loss is
+announced across the middle of the screen, not just in the corner. Running out
+is GAME OVER.
+
+**Nowhere is safe.** Flak is a ground weapon and physically cannot reach the
+ceiling, which made cruising at the top a safe, scoreless, boring optimum.
+Enemy scouts fix that: they come from ahead and drift toward *your* altitude.
+Shoot them down or out-climb them — Audit A14 proves you can always do one.
 
 **The tension is altitude.** Low is where the bombs land true, where the guns
 reach, and where the multiplier climbs — and it is exactly where the flak is
@@ -78,6 +90,9 @@ is a statement about the game, not about a model of it.
     A9  control response                              full reversal 0.34s, gentle 0.34s glide to terminal sink
     A10 soak, 40 sorties                              no NaN, nobody dies on the runway
     A11 warm-up really is quiet                       260 rows before the guns wake
+    A12 lives work, respawn is safe and has grace     3 machines, then game over
+    A13 scouts reach a ceiling-hugging pilot          6/6 ceiling runs engaged
+    A14 a scout can always be out-climbed             17.3 rows of separation vs 9 needed
 
 ## Architecture
 
