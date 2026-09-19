@@ -138,6 +138,9 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
                 val i = event.actionIndex
                 val id = event.getPointerId(i)
                 if (sim.crashed) { restart(); return true }
+                // first touch launches the sortie; it also counts as input,
+                // so the tap that starts you is not swallowed
+                sim.start()
                 if (event.getX(i) < halfW) {
                     if (leftPointer < 0) leftPointer = id
                 } else {

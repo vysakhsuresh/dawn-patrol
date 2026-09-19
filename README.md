@@ -13,10 +13,25 @@ One thumb, no menus.
 
 | input | does |
 |---|---|
-| **hold left half** | climb. Release to dive. Gravity is always pulling. |
-| **press right half** | drop a bomb *and* open up with the guns |
+| **hold left half** | climb |
+| **let go** | glide down gently |
+| **tap right half** | drop a bomb *and* open up with the guns |
 | **hold right half** | keep the guns firing |
 | **tap anywhere (crashed)** | scramble a new sortie |
+
+The aircraft flies straight and level until your first touch — the sortie
+starts when you're ready, not the instant the app opens. First launch shows a
+briefing card with the controls and what everything is worth.
+
+| target | points |
+|---|---|
+| depot | 280 |
+| balloon | 170 |
+| tank | 140 |
+| searchlight | 130 |
+| AA gun | 110 |
+
+All multiplied by your greed multiplier, up to ×9.
 
 **The tension is altitude.** Low is where the bombs land true, where the guns
 reach, and where the multiplier climbs — and it is exactly where the flak is
@@ -57,10 +72,10 @@ is a statement about the game, not about a model of it.
     A3  cell() correct across worldX = 0              vs naive toInt(), which fails 375/400
     A4  no plane art outside its hitbox               all 3 attitudes, box == drawn extent
     A5  terrain continuity                            max step 1.836 rows
-    A6  every legal shell is dodgeable                2168/2168 states, worst margin 13.86 vs 8.70 needed
+    A6  every legal shell is dodgeable                648/648 reachable states, worst margin 14.16 vs 8.70 needed
     A7  never 2 lethal bursts at once                 max concurrent 1
-    A8  balloons clearable from any altitude          144/144, worst margin 29.1 rows
-    A9  control response                              full reversal 0.34s
+    A8  balloons clearable from any altitude          144/144, worst margin 22.3 rows
+    A9  control response                              full reversal 0.34s, gentle 0.34s glide to terminal sink
     A10 soak, 40 sorties                              no NaN, nobody dies on the runway
     A11 warm-up really is quiet                       260 rows before the guns wake
 

@@ -226,6 +226,15 @@ object Audit {
             while (vy0 <= Tune.VY_MAX_DN) {
                 var alt = Tune.CEIL_ROW
                 while (alt <= ground - Tune.PLANE_H - 1f) {
+                    // Range and altitude are NOT independent. The gun is on
+                    // the ground, so slant range can never be less than the
+                    // vertical separation - a plane near the ceiling simply
+                    // cannot be 36 rows from a battery. Sweeping them freely
+                    // tested states the geometry forbids.
+                    val gunY = ground - 8f
+                    val vertSep = abs((alt + Tune.PLANE_H / 2f) - gunY)
+                    if (vertSep > range) { alt += 4f; continue }
+
                     val (dev, alive) = bestDodge(vy0, alt, t, ground)
                     // A state no control input can keep out of the dirt is
                     // already lost to terrain; a shell did not kill it.
@@ -260,6 +269,7 @@ object Audit {
         for (seed in 0 until 12) {
             val sim = Sim(MemStore())
             sim.reset()
+            sim.start()
             var t = 0
             while (t < 9000 && !sim.crashed) {
                 // a greedy pilot: hug the deck, which is where the flak is worst
@@ -358,6 +368,7 @@ object Audit {
         for (seed in 0 until 40) {
             val sim = Sim(MemStore())
             sim.reset()
+            sim.start()
             var t = 0
             var committedTo: Shot? = null
             var commitClimb = false
@@ -413,6 +424,7 @@ object Audit {
         for (seed in 0 until 8) {
             val sim = Sim(MemStore())
             sim.reset()
+            sim.start()
             var t = 0
             while (t < 4000 && sim.distance < Tune.WARMUP_ROWS) {
                 sim.climbing = sim.altitude() < 30f

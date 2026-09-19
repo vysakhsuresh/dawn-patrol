@@ -51,9 +51,19 @@ object FrameDump {
         File(dir).mkdirs()
         val r = Renderer()
 
+        // ---- 0  the opening briefing, before the first touch --------------
+        run {
+            val sim = Sim(MemStore())
+            var t = 0
+            while (t < 60) { sim.update(1f); t++ }
+            r.render(sim)
+            write(r, r.palette(sim.phase()), "$dir/f0_briefing.ppm")
+        }
+
         // ---- 1  dawn: the opening minute, quiet, still climbing out -------
         run {
             val sim = Sim(MemStore())
+            sim.start()
             fly(sim, 4000, { s, _ -> s.climbing = s.altitude() < 46f },
                 { s, t -> t > 230 })
             r.render(sim)
@@ -63,6 +73,7 @@ object FrameDump {
         // ---- 2  a low strafing run with flak up and the multiplier going --
         run {
             val sim = Sim(MemStore())
+            sim.start()
             var committedTo: Shot? = null
             var commitClimb = false
             val ok = fly(sim, 400000, { s, t ->
@@ -88,6 +99,7 @@ object FrameDump {
         // ---- 3  night, caught in a searchlight ----------------------------
         run {
             val sim = Sim(MemStore())
+            sim.start()
             // cruise high: above MAX_ENGAGE the batteries cannot reach, which
             // is the only profile that reliably survives long enough to reach
             // darkness. Drop low once night falls, to get caught in a beam.
@@ -103,6 +115,7 @@ object FrameDump {
         // ---- 4  the crash card -------------------------------------------
         run {
             val sim = Sim(MemStore())
+            sim.start()
             fly(sim, 60000, { s, t ->
                 s.climbing = s.altitude() < 14f && t < 1500
                 s.firing = true
@@ -115,6 +128,7 @@ object FrameDump {
         // ---- 5  a dusk pass, to show the palette cycle --------------------
         run {
             val sim = Sim(MemStore())
+            sim.start()
             fly(sim, 400000, { s, _ -> s.climbing = s.py > 34f },
                 { s, _ -> s.phase() >= 2.4f && s.phase() < 2.6f && !s.crashed })
             r.render(sim)

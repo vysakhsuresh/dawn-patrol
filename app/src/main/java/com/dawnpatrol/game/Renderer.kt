@@ -82,7 +82,10 @@ class Renderer {
         if (night) beams(sim)
         projectiles(sim)
         bursts(sim)
-        plane(sim, night)
+        // The full briefing covers the sky, and the text plates punch holes
+        // straight through the aircraft - it reads as a rendering fault. The
+        // world still scrolls behind the card, so the scene stays alive.
+        if (sim.started || sim.crashed || !sim.showFullBriefing) plane(sim, night)
         pips(sim)
         hud(sim, night)
     }
@@ -440,8 +443,13 @@ class Renderer {
 
         fb.text("ALT " + sim.altitude().toInt().coerceAtLeast(0), 3, 2, paper)
 
+        // score, right-aligned - the number the player is actually chasing
+        val sc = sim.score.toString()
+        fb.text(sc, Art.GW - 3 - Fb.textW(sc), 2, paper)
+
         // bombs remaining, as icons - diegetic and instantly countable
-        var bx = Art.GW - 3 - sim.bombs * 4
+        val bw = sim.bombs * 4
+        val bx = (Art.GW - bw) / 2 + 4
         for (i in 0 until sim.bombs) {
             fb.sprite(Art.SPR_BOMB, bx + i * 4, 2, paper)
         }
@@ -470,6 +478,9 @@ class Renderer {
 
         balloonWarning(sim)
 
+        if (!sim.started && !sim.crashed) {
+            if (sim.showFullBriefing) briefing(sim) else startPrompt(sim)
+        }
         if (sim.crashed) crashCard(sim)
     }
 
@@ -500,17 +511,72 @@ class Renderer {
         }
     }
 
+    /**
+     * The opening briefing. Shown once, before the first sortie ever flown.
+     *
+     * A player who does not know that LOW is where the points are will fly
+     * high, score nothing, and conclude the game is empty - so the risk/
+     * reward line is on the card, not buried in a tutorial nobody reads.
+     */
+    private fun briefing(sim: Sim) {
+        val title = "DAWN PATROL"
+        val tw = Fb.textW(title, 2, 2)
+        fb.plateText(title, (Art.GW - tw) / 2, 21, 1, 2, 2, 3)
+
+        val lines = listOf(
+            "" to 0,
+            "HOLD LEFT  -  CLIMB" to 1,
+            "LET GO  -  GLIDE DOWN" to 1,
+            "TAP RIGHT  -  BOMB" to 1,
+            "HOLD RIGHT  -  GUNS" to 1,
+            "" to 0,
+            "TARGETS" to 1,
+            "DEPOT 280   TANK 140" to 1,
+            "BALLOON 170  GUN 110" to 1,
+            "" to 0,
+            "FLY LOW TO MULTIPLY" to 1,
+            "UP TO X9  -  BUT THE" to 1,
+            "FLAK AIMS BETTER LOW" to 1,
+            "" to 0,
+            "MIND THE CABLES" to 1
+        )
+        var y = 40
+        for ((line, on) in lines) {
+            if (on == 1) {
+                val w = Fb.textW(line)
+                fb.plateText(line, (Art.GW - w) / 2, y, 1, 1, 1, 1)
+            }
+            y += if (on == 1) 8 else 4
+        }
+        if (((sim.ticks / 22f).toInt() and 1) == 0) {
+            val s2 = "TAP TO FLY"
+            fb.plateText(s2, (Art.GW - Fb.textW(s2)) / 2, 152, 1, 1, 1, 2)
+        }
+    }
+
+    /** After the first sortie, just a beat to get your thumb ready. */
+    private fun startPrompt(sim: Sim) {
+        if (sim.bestScore > 0) {
+            val b = "BEST " + sim.bestScore
+            fb.plateText(b, (Art.GW - Fb.textW(b)) / 2, 40, 1, 1, 1, 2)
+        }
+        if (((sim.ticks / 22f).toInt() and 1) == 0) {
+            val s2 = "TAP TO FLY"
+            fb.plateText(s2, (Art.GW - Fb.textW(s2)) / 2, 150, 1, 1, 1, 2)
+        }
+    }
+
     private fun crashCard(sim: Sim) {
         val title = "SHOT DOWN"
         val tw = Fb.textW(title, 2, 2)
         fb.plateText(title, (Art.GW - tw) / 2, 36, 1, 2, 2, 3)
         val lines = listOf(
-            "CAUSE " + sim.crashCause,
-            "LINE  " + (sim.linePct * 100f).toInt() + "%",
-            "GAIN  +" + (sim.lineDelta * 1000f).toInt(),
-            "GUNS  " + sim.killsAA,
-            "DEPOTS " + sim.killsDepot,
-            "ROWS  " + sim.distance.toInt()
+            "SCORE  " + sim.score,
+            "BEST   " + sim.bestScore,
+            "CAUSE  " + sim.crashCause,
+            "LINE   " + (sim.linePct * 100f).toInt() + "%",
+            "GUNS " + sim.killsAA + "  DEPOTS " + sim.killsDepot,
+            "ROWS   " + sim.distance.toInt()
         )
         var y = 56
         for (l in lines) {

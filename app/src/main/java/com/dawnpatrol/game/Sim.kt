@@ -86,6 +86,18 @@ class Sim(private val store: Store) {
     private var lowTicks = 0f
     private var highTicks = 0f
 
+    // ---- start gate -------------------------------------------------------
+    // The sortie does not begin until the player touches. Until then the
+    // aeroplane flies straight and level. Dropping someone into a falling
+    // plane before they have found the controls reads as a crash, not a game.
+    var started = false; private set
+    var sorties = 0; private set
+    val showFullBriefing: Boolean get() = sorties == 0
+
+    // ---- score --------------------------------------------------------------
+    var score = 0; private set
+    var bestScore = 0; private set
+
     // ---- the line ---------------------------------------------------------
     var linePct = Tune.LINE_START; private set
     var lineDelta = 0f; private set   // this sortie only, for the end card
@@ -122,6 +134,8 @@ class Sim(private val store: Store) {
     private fun load() {
         linePct = store.getFloat("line", Tune.LINE_START).coerceIn(0f, 1f)
         best = store.getFloat("best", 0f)
+        bestScore = store.getFloat("bestScore", 0f).toInt()
+        sorties = store.getFloat("sorties", 0f).toInt()
         val d = store.getString("dead", "")
         if (d.isNotEmpty()) for (part in d.split(',')) part.toIntOrNull()?.let { destroyed.add(it) }
         reset()
@@ -130,6 +144,8 @@ class Sim(private val store: Store) {
     private fun save() {
         store.putFloat("line", linePct)
         store.putFloat("best", best)
+        store.putFloat("bestScore", bestScore.toFloat())
+        store.putFloat("sorties", sorties.toFloat())
         // The world is endless, so the destroyed set cannot grow forever.
         // Keep the most recent slots - the ones the player may fly back over.
         val keep = destroyed.sortedDescending().take(512)
@@ -137,9 +153,12 @@ class Sim(private val store: Store) {
         store.flush()
     }
 
+    private var introBaseY = (Art.HORIZON - 52).toFloat()
+
     fun reset() {
         camX = 0.0
         py = (Art.HORIZON - 52).toFloat()
+        introBaseY = py
         vy = 0f
         speed = Tune.SPEED_MIN
         distance = 0f
@@ -155,6 +174,8 @@ class Sim(private val store: Store) {
         lowTicks = 0f
         highTicks = 0f
         lineDelta = 0f
+        score = 0
+        started = false
         killsAA = 0; killsDepot = 0; killsTank = 0; killsBalloon = 0
         lockTicks = 0f
         ticks = 0f
@@ -162,6 +183,14 @@ class Sim(private val store: Store) {
         for (b in bursts) b.alive = false
         for (p in pips) p.alive = false
         gunTimers.clear()
+    }
+
+    /** First touch: the aeroplane stops loitering and the sortie begins. */
+    fun start() {
+        if (started) return
+        started = true
+        sorties++
+        vy = 0f
     }
 
     // =====================================================================
@@ -211,6 +240,17 @@ class Sim(private val store: Store) {
         if (crashed) {
             crashTicks += dt
             stepShots(dt); stepBursts(dt); stepPips(dt)
+            return
+        }
+
+        if (!started) {
+            // Loiter: straight and level, world drifting past so the scene
+            // reads as alive rather than frozen. No gravity, no guns, no flak.
+            camX += Tune.INTRO_DRIFT * dt
+            vy = 0f
+            py = introBaseY + kotlin.math.sin((ticks * 0.035f).toDouble()).toFloat() *
+                Tune.INTRO_BOB
+            visibleSlots()
             return
         }
 
@@ -367,20 +407,23 @@ class Sim(private val store: Store) {
 
     private fun killSlot(k: Int, type: Int, x: Float, y: Float) {
         if (!destroyed.add(k)) return
+        var pts = 0
         val gain = when (type) {
-            World.DEPOT -> { killsDepot++; Tune.LINE_DEPOT }
-            World.AA_GUN -> { killsAA++; Tune.LINE_AA }
-            World.TANK -> { killsTank++; Tune.LINE_TANK }
-            World.BALLOON -> { killsBalloon++; Tune.LINE_BALLOON }
-            World.LIGHT -> { killsAA++; Tune.LINE_AA }
+            World.DEPOT -> { killsDepot++; pts = Tune.PTS_DEPOT; Tune.LINE_DEPOT }
+            World.AA_GUN -> { killsAA++; pts = Tune.PTS_AA; Tune.LINE_AA }
+            World.TANK -> { killsTank++; pts = Tune.PTS_TANK; Tune.LINE_TANK }
+            World.BALLOON -> { killsBalloon++; pts = Tune.PTS_BALLOON; Tune.LINE_BALLOON }
+            World.LIGHT -> { killsAA++; pts = Tune.PTS_LIGHT; Tune.LINE_AA }
             else -> 0f
         } * mult
+        val earned = pts * mult
+        score += earned
         linePct = (linePct + gain).coerceIn(0f, 1f)
         lineDelta += gain
         detonate(x, y - 4f, 7f, false)
         freePip()?.let {
             it.alive = true; it.x = x; it.y = y - 14f; it.age = 0f
-            it.text = "+" + (gain * 1000f).toInt()
+            it.text = "+" + earned
         }
         gunTimers.remove(k)
     }
@@ -608,6 +651,7 @@ class Sim(private val store: Store) {
         crashTicks = 0f
         detonate((camX + Art.PLAYER_X + 11).toFloat(), py + 4f, 11f, false)
         if (distance > best) best = distance
+        if (score > bestScore) bestScore = score
         save()
     }
 

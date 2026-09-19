@@ -22,15 +22,24 @@ package com.dawnpatrol.game
 object Tune {
 
     // ---- flight ---------------------------------------------------------
-    const val CLIMB_ACC = 0.130f      // rows/tick^2, applied while held
-    const val GRAVITY = 0.105f        // rows/tick^2, always pulling down
-    const val VY_MAX_UP = 1.15f       // terminal climb rate
-    const val VY_MAX_DN = 1.50f       // terminal dive rate
+    // TUNED AFTER PLAYTEST. The first numbers made this a flapping game:
+    // gravity was strong enough that letting go for one second dropped you
+    // most of the usable band, so the only way to stay up was to hammer the
+    // screen. An aeroplane should GLIDE when you stop pulling, not plummet.
+    //
+    // What changed: gravity is now less than half the climb authority, and
+    // terminal sink is gentle. Releasing costs you altitude slowly; holding
+    // buys it back briskly. Full reversal is still ~0.35s, so it has not
+    // gone mushy - it is responsive without being exhausting.
+    const val CLIMB_ACC = 0.072f      // rows/tick^2, applied while held
+    const val GRAVITY = 0.030f        // rows/tick^2, always pulling down
+    const val VY_MAX_UP = 0.86f       // terminal climb rate
+    const val VY_MAX_DN = 0.62f       // terminal sink rate - a glide, not a drop
 
     // Forward speed tracks pitch: diving trades altitude for speed. Faster
     // also means less time to react, which is the cost of going low.
     const val SPEED_MIN = 0.62f       // rows/tick at full climb  (~37/s)
-    const val SPEED_MAX = 1.25f       // rows/tick at full dive   (~75/s)
+    const val SPEED_MAX = 1.05f       // rows/tick at full dive   (~63/s)
 
     // The plane's hitbox is EXACTLY its drawn extent - see Audit A4. No
     // forgiving shrink: art must never extend past the box in the direction
@@ -57,7 +66,7 @@ object Tune {
     // The signature mechanic. Guns solve a real intercept on your CURRENT
     // velocity, so holding a steady line is what gets you killed; changing
     // vertical velocity is what saves you.
-    const val SHELL_SPEED = 1.55f     // rows/tick - deliberately slow.
+    const val SHELL_SPEED = 1.15f     // rows/tick - deliberately slow.
                                       // Flight time is what creates the dodge
                                       // window, and a slow shell buys it from a
                                       // range where the firing gun is still
@@ -125,6 +134,20 @@ object Tune {
     // at roughly 80 seconds, so a decent run actually flies into darkness.
     const val PHASE_LEN = 900f        // rows of world per phase
 
+    // ---- scoring -----------------------------------------------------------
+    // Shown to the player on the briefing card, so these ARE the contract.
+    const val PTS_DEPOT = 280
+    const val PTS_BALLOON = 170
+    const val PTS_TANK = 140
+    const val PTS_LIGHT = 130
+    const val PTS_AA = 110
+
     // ---- pacing -----------------------------------------------------------
     const val WARMUP_ROWS = 260f      // quiet run-in before the guns wake up
+
+    // The aircraft flies straight and level until the player's first touch.
+    // Opening on a plane already falling out of the sky reads as a bug and
+    // panics people before they have found the controls.
+    const val INTRO_DRIFT = 0.34f     // rows/tick of world scroll while waiting
+    const val INTRO_BOB = 1.6f        // rows of gentle float, so it looks alive
 }
