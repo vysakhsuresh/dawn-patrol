@@ -4,3 +4,4 @@ __pycache__/
 build/
 local.properties
 .idea/
+out/kt/*.ppm

@@ -3,125 +3,141 @@
 A WW1-era aerial war game in 1-bit pixel art. Side view, portrait, one screen,
 no menus. The battlefield below is alive; you are one aircraft passing over it.
 
-**Status: buildable Gradle/Android project. Core climb/dive/gravity loop,
-procedural terrain and features, collision, crash/restart cycle. Solid-ink
-rendering only so far — no dithered atmosphere or AA combat/scoring yet; see
-"What's scaffolded vs. what's next" below.**
+**Status: playable.** Core loop, anti-aircraft fire, bombs and guns, a
+persistent front line, barrage balloons, searchlights, and a day/night cycle —
+all compiled, audited and rendered from the shipped Kotlin.
 
-## The look, in four frames
+## The game
 
-    out/frame1.png   dawn take-off / start screen
-    out/frame2.png   low strafing run, flak up, multiplier up
-    out/frame3.png   night pass, searchlight locked
-    out/frame4.png   the crash
-    out/contact.png  all four side by side
-    out/sheet.png    every sprite with its hitbox
+One thumb, no menus.
 
-## How the art is made (and why)
+| input | does |
+|---|---|
+| **hold left half** | climb. Release to dive. Gravity is always pulling. |
+| **press right half** | drop a bomb *and* open up with the guns |
+| **hold right half** | keep the guns firing |
+| **tap anywhere (crashed)** | scramble a new sortie |
 
-Nothing is hand-guessed. `mock/` is a Python/PIL renderer that produces full
-game frames from the same sprite grids and constants the game will ship, so the
-preview and the game cannot disagree.
+**The tension is altitude.** Low is where the bombs land true, where the guns
+reach, and where the multiplier climbs — and it is exactly where the flak is
+accurate. High is safe and useless: above the batteries' reach nothing can
+touch you, and nothing you do counts. The multiplier only ticks up while you
+are low, so climbing to safety is what spends it. You choose your own greed.
 
-    mock/artdata.py   sprite grids + tuning constants (source of truth today)
-    mock/ktparse.py   once GameView.kt exists, it is parsed with regex and
-                      OVERRIDES artdata - the .kt becomes the source of truth
-                      and the preview can never drift from shipped code
-    mock/render.py    1-bit framebuffer, 8x8 ordered dither, 3x5 pixel font
-    mock/world.py     procedural world, seeded from ABSOLUTE world position
-    mock/scene.py     layer compositor (sky / far field / earth / atmosphere)
-    mock/frames.py    the four frames
-    mock/audit.py     numeric regression audit - run this before shipping
-    mock/sheet.py     sprite contact sheet
-    mock/zoom.py      blow up any sprite by name
-    mock/shear.py     design tool: derive pitch attitudes from the level sprite
+**The AA guns solve a real intercept.** They fire time-fuzed shells at where
+you *would* be if you held your line, and the shell bursts on that point. So
+holding a steady line is what kills you; changing vertical velocity is what
+saves you. Every shell is provably dodgeable — see A6 below.
 
-Run:
+**The line is the score.** Destroying a depot, gun, tank or balloon pushes the
+front line your way and it stays pushed — wrecks keep burning on the next pass.
+Flying past live targets lets the line creep back. It persists across sessions.
 
-    cd mock
-    python3 frames.py && python3 sheet.py && python3 audit.py
+## Frames
 
-(Needs Pillow. On this box that is `python3.12`.)
+`out/kt/contact.png` — dawn, a day run, dusk, a night pass caught in a
+searchlight, and the crash card.
+
+These are **not mockups**. `Fb`, `Sim` and `Renderer` contain no `android.*`,
+so `tools/frames.sh` runs the shipped simulation through the shipped renderer
+and writes its framebuffer straight to disk. If a frame looks wrong here, the
+game looks wrong.
+
+## Verifying it without a device
+
+    tools/kotlinc-setup.sh     # one-time: fetches a standalone Kotlin compiler
+    tools/audit.sh             # the fairness + regression proof
+    tools/frames.sh            # render real frames to out/kt/
+
+The audit compiles against the same classes that go in the APK. A result there
+is a statement about the game, not about a model of it.
+
+    A1  terrain + features stable over 24000 frames   0 drift, 0 mutations
+    A2  seeding independent of walk direction         6000/6000 camera positions
+    A3  cell() correct across worldX = 0              vs naive toInt(), which fails 375/400
+    A4  no plane art outside its hitbox               all 3 attitudes, box == drawn extent
+    A5  terrain continuity                            max step 1.836 rows
+    A6  every legal shell is dodgeable                2168/2168 states, worst margin 13.86 vs 8.70 needed
+    A7  never 2 lethal bursts at once                 max concurrent 1
+    A8  balloons clearable from any altitude          144/144, worst margin 29.1 rows
+    A9  control response                              full reversal 0.34s
+    A10 soak, 40 sorties                              no NaN, nobody dies on the runway
+    A11 warm-up really is quiet                       260 rows before the guns wake
+
+## Architecture
+
+    Art.kt       sprites, font, dither table, canvas constants
+    Tune.kt      every number that decides how it FEELS, in one place
+    World.kt     procedural world, seeded from absolute world position
+    Sim.kt       the entire game, pure and deterministic
+    Fb.kt        1-bit software framebuffer + drawing primitives
+    Renderer.kt  draws a Sim into an Fb
+    GameView.kt  Android: input, frame clock, one bitmap blit
+    Sound.kt     synthesized audio, zero audio files
+    MainActivity.kt
+
+The scene is composed into a 100x175 1-bit buffer in pure Kotlin and blitted
+once as a nearest-neighbour `Bitmap`. Drawing ~17k scaled `drawRect` calls
+instead leaves sub-pixel seams at most scale factors; a bitmap blit cannot, and
+it is what lets the offline tools render identical pixels.
+
+Ported forward from Cat on a Fence: fixed 400x700 logical canvas with
+`scale = min(w/LW, h/LH)` and centring offsets; `PX = 4`; sprites as
+`Array<String>` of `X`/`.`; Choreographer loop with `dt = elapsed / 16_666_667f`
+clamped to 0.25..2.5; pause on window **focus** loss, not just `onPause`; no
+image assets, no audio assets, no XML layouts, no engine.
 
 ## The value system
 
-A 50% dither at 100x175 is a checkerboard, and a screen full of checkerboard has
-no hierarchy. So dither is rationed:
+A 50% dither at 100x175 is a checkerboard, and a screen of checkerboard has no
+hierarchy. So dither is rationed:
 
-| layer       | treatment                                        |
-|-------------|--------------------------------------------------|
-| sky         | clean paper, at most a faint stipple gradient     |
-| far field   | tall objects (poplars, a ruined spire) at ~60% density — distance reads as haze, not as a low grey landmass |
-| earth       | SOLID ink, one unbroken silhouette                |
-| features    | solid ink, 1px paper halo so they separate        |
-| smoke / flak / searchlight | the only mid-tones on screen — so they pop |
+| layer | treatment |
+|---|---|
+| sky | clean paper, at most a faint **noise** stipple |
+| far field | tall hazed objects — distance is haze, never a grey landmass |
+| earth | SOLID ink, one unbroken silhouette |
+| features | solid ink, 1px paper halo so they separate from it |
+| smoke / flak / beams | the only mid-tones on screen, so they pop |
 
-Depth between overlapping silhouettes comes from a 1–2px paper gap punched along
-the nearer layer's crest, never from a dither value.
+Depth between overlapping silhouettes is a 1–2px paper gap punched along the
+nearer layer's crest, never a dither value.
 
-At night the structure inverts: the earth is the paper (black), features are
-pale outlines with a faint interior, and an aircraft caught in a searchlight is
-drawn as a *hole* punched in a bright pool of light.
+Ordered (Bayer) dither at very low density lights the same cells of every 8x8
+tile, which reads as a regular dotted lattice — wallpaper, not atmosphere. The
+sky gradient therefore uses hashed **noise** dither; the ordered table is still
+the right tool for smoke, flak and beams, where structure reads as texture.
 
-## Opening the project
-
-    git clone https://github.com/vysakhsuresh/dawn-patrol.git
-    # Android Studio: Open... and pick the cloned folder (not a subfolder).
-    # It's a normal Gradle project (settings.gradle.kts at the root), so
-    # Studio should offer Gradle Sync automatically.
-
-I could not run a real Gradle sync from this sandbox - the sandbox's egress
-policy hard-blocks `dl.google.com` (confirmed: `maven.google.com` redirects
-there and the redirect itself is refused), which is what AGP/androidx
-artifacts ultimately resolve through. Every file was written and reviewed by
-hand instead. Your Android Studio should have normal network access, so the
-first real sync/build happens on your machine - if anything doesn't compile,
-send me the error and I'll fix it fast.
-
-## What's scaffolded vs. what's next
-
-Working: the fixed-canvas fit-scale, the Choreographer loop (dt clamped
-0.25..2.5), left/right touch zones, climb/gravity/dive physics, the audited
-procedural world (terrain, AA guns, depots, trenches, balloons, tanks,
-searchlights - as silhouettes), ground collision, a crash/restart cycle, a
-front-line meter that persists across sessions via SharedPreferences, and
-three short synthesized SFX (gun crack, bomb whistle, hit thud) using the
-exact MODE_STATIC / stop() / reloadStaticData() / play() pattern.
-
-Deliberately not yet built: dithered atmosphere (smoke/flak/searchlight
-cones - Art.kt has no dither table yet), AA lead-targeting and return fire,
-bomb-drop and depot destruction, day/night cycle, and real scoring (the
-front-line meter currently just nudges from distance flown - a placeholder,
-not the real depot-destruction economy from the brief). These come once the
-flight feel itself is signed off, per the brief's own expectation that
-continuous flight control takes several rounds of tuning.
-
-`Art.kt` was generated by script from `mock/artdata.py` so the sprites in
-the APK are byte-identical to the ones already rendered and approved as
-PNGs - see the generation step in git history if the sprites ever need
-regenerating. `mock/ktparse.py` is now live: once you run the mock
-(`cd mock && python3 frames.py`), it parses `Art.kt` and every future
-preview reads shipped code, not a hand-kept copy.
-
-## Ported forward from Cat on a Fence
-
-- Fixed logical canvas 400x700, `scale = min(w/LW, h/LH)` with centring offsets.
-- `PX = 4` logical units per sprite pixel → a 100 x 175 pixel grid.
-- Sprites are `Array<String>` of `X`/`.`, run-length batched into `drawRect`.
-- Choreographer loop, `dt = elapsed / 16_666_667f`, clamped to 0.25..2.5.
-- No image assets, no audio assets, no XML layouts, no engine.
+At night the structure inverts: the earth becomes the paper, features are pale
+outlines, and an aircraft caught in a beam is a **hole** punched in the light.
+Colours crossfade between five keyframes; the structural flip happens at the
+deep-dusk keyframe, where both sides are near-black, so nothing visibly jumps.
 
 ## Bugs we already paid for
 
-1. **Seed from absolute world position.** `world.cell()` uses floor division and
-   `world.frac()` takes the cell index the caller already has, so the index and
-   the offset come from the same `floor()` and can never disagree. Audit A1/A2.
-2. **Art must not lie about physics.** Every plane attitude fits one 22x9 hitbox
-   and no pixel escapes it. Audit A4.
-3. **Prove fairness numerically.** `audit.py` is where that lives. Flyability and
-   AA dodge-window proofs land there when the flight model does.
+1. **Seed from absolute world position.** `World.cell()` uses floor division
+   and `frac()` takes the cell index the caller already has, so index and
+   offset come from the same `floor()`. Audit A1/A2.
+2. **Art must not lie about physics.** The hitbox is the exact drawn extent —
+   no forgiving shrink, which is the same lie wearing a hat. Audit A4.
+3. **Prove fairness numerically.** A6/A7/A8 are that proof, run against
+   shipped code.
 4. **Unary minus binds tighter than `%`.** No `%` on anything that can be
-   negative; `cell()` uses `floor()`. Audit A3 also shows what naive `int()`
-   truncation would have done.
-5. Binary files do not go through the GitHub MCP tools — this repo is pushed
+   negative. `World.hash32` uses `UInt` so its shifts stay logical — a plain
+   Kotlin `shr` sign-extends and silently diverges. Audit A3.
+5. Binary files don't go through the GitHub MCP tools — this repo is pushed
    from the local clone.
+6. **Adaptive icons:** VectorDrawable only (`<path>`/`<group>`/`<clip-path>`,
+   no `<circle>`), content inside the 66% safe circle, verified under circle,
+   squircle and square masks. `mock/icon_masks.py`, `out/icon_masks.png`.
+
+## About `mock/`
+
+It now holds only the launcher-icon tooling, and that reads sprites straight
+out of `Art.kt` via `mock/ktparse.py`.
+
+The Python renderer, world generator and audit that used to live here have been
+**deleted**. They were a second implementation of things the Kotlin now does,
+and a second implementation is precisely the thing this project keeps getting
+burned by — it agrees with the game right up until it quietly doesn't. One
+source of truth, and the tools run *it*.

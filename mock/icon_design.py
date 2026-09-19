@@ -10,7 +10,7 @@ game's own hard-edged 1-bit look rather than the smooth reference mockup.
 """
 import sys, os, math
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import artdata as A
+from ktart import A
 
 VP = 108             # adaptive icon viewport, in dp/units
 CELL = 3             # size of one "pixel" in viewport units
