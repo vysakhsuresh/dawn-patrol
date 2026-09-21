@@ -39,6 +39,17 @@ class Sound {
     @Volatile private var hit: AudioTrack? = null
     @Volatile private var released = false
 
+    /** Silences the effects and the drone without tearing anything down. */
+    @Volatile var muted = false
+
+    /**
+     * Momentary silence for a frozen world, kept separate from `muted` so a
+     * pause never overwrites what the player chose. An engine droning on
+     * over a stopped aeroplane is the loudest possible way to say the pause
+     * did not really take.
+     */
+    @Volatile var suspended = false
+
     // ---- engine drone ----------------------------------------------------
     @Volatile private var enginePitch = 0f
     @Volatile private var engineOn = false
@@ -88,6 +99,7 @@ class Sound {
     }
 
     private fun replay(track: AudioTrack?) {
+        if (muted || suspended) return
         val t = track ?: return
         try {
             t.stop()
@@ -148,7 +160,8 @@ class Sound {
                         // clipped sine -> harmonics, so it sounds mechanical
                         val a = sin(phase)
                         val s = (if (a > 0.32) 0.32 else if (a < -0.32) -0.32 else a) * 2.2
-                        val v = (s * 0.55 + sin(phase2) * 0.18) * (0.22 + 0.16 * p)
+                        val gain = if (muted || suspended) 0.0 else 1.0
+                    val v = (s * 0.55 + sin(phase2) * 0.18) * (0.22 + 0.16 * p) * gain
                         chunk[i] = (v.coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort()
                     }
                     track.write(chunk, 0, chunk.size)

@@ -798,6 +798,130 @@ object Audit {
     }
 
     // =====================================================================
+    //  A20  a pause stops the world, and is not a way out of a shell
+    // =====================================================================
+
+    /** Everything about the run that a frozen world must not change. */
+    private fun snapshot(s: Sim): String {
+        val b = StringBuilder()
+        b.append(s.camX).append('|').append(s.py).append('|').append(s.vy)
+            .append('|').append(s.distance).append('|').append(s.score)
+            .append('|').append(s.lives).append('|').append(s.mult)
+            .append('|').append(s.bombs).append('|').append(s.invuln)
+            .append('|').append(s.lifeFlash).append('|').append(s.lockTicks)
+            .append('|').append(s.linePct).append('|').append(s.speed).append('#')
+        for (t in s.shots) b.append(t.alive).append(',').append(t.x).append(',')
+            .append(t.y).append(',').append(t.fuse).append(',').append(t.life).append(';')
+        b.append('#')
+        for (t in s.bursts) b.append(t.alive).append(',').append(t.x).append(',')
+            .append(t.y).append(',').append(t.age).append(',').append(t.lethal).append(';')
+        b.append('#')
+        for (t in s.enemies) b.append(t.alive).append(',').append(t.x).append(',')
+            .append(t.y).append(',').append(t.fireTimer).append(';')
+        return b.toString()
+    }
+
+    private fun a20Pause() {
+        // ---- the buttons are reachable and cannot be hit by accident ------
+        var overlap = false
+        for (gx in 0 until Art.GW) {
+            val f = gx.toFloat() + 0.5f
+            if (Art.hitPause(f, 4f) && Art.hitMute(f, 4f)) overlap = true
+        }
+        val pw = (0 until Art.GW).count { Art.hitPause(it + 0.5f, 4f) }
+        val mw = (0 until Art.GW).count { Art.hitMute(it + 0.5f, 4f) }
+        note("touch targets: pause $pw game px wide, sound $mw " +
+            "(~${pw * 108 / 10} physical px on a 1080-wide phone)")
+        check("A20 the two HUD buttons cannot both be hit", !overlap, "")
+        check("A20 the HUD buttons are big enough to hit", pw >= 12 && mw >= 12,
+            "$pw and $mw game px")
+        check("A20 the buttons stay inside the HUD strip",
+            !Art.hitPause(Art.PAUSE_X + 3f, Art.HUD_H.toFloat()) &&
+                !Art.hitMute(Art.MUTE_X + 3f, Art.HUD_H.toFloat()), "")
+        // ...and clear of the readouts either side of them
+        val altRight = 3 + Fb.textW("ALT 999")
+        val scoreLeft = Art.GW - 3 - Fb.textW("999999")
+        check("A20 the buttons do not sit on the altimeter or the score",
+            Art.PAUSE_X > altRight && Art.MUTE_X + Art.BTN_W < scoreLeft,
+            "ALT ends $altRight, buttons ${Art.PAUSE_X}..${Art.MUTE_X + Art.BTN_W}, " +
+                "score starts $scoreLeft")
+
+        // ---- a pause before the off, or after the end, does nothing -------
+        val fresh = Sim(MemStore())
+        fresh.pause()
+        check("A20 there is nothing to pause before the sortie starts",
+            !fresh.paused, "")
+
+        // ---- the world really does stop -----------------------------------
+        val s = Sim(MemStore())
+        s.dismissBriefing(); s.start()
+        var i = 0
+        // fly until there is plenty in the air to freeze
+        while (i < 40000 && !(s.shots.count { it.alive && it.kind == K_SHELL } >= 1 &&
+                s.shots.count { it.alive } >= 3 &&
+                s.enemies.any { it.alive } && !s.gameOver)) {
+            // LOW, deliberately: TestPilot cruises above the flak envelope,
+            // and a state with no shell in the air proves nothing here.
+            s.climbing = s.altitude() < 26f
+            s.firing = true
+            if (i % 150 == 0) s.dropBomb()
+            s.update(1f); i++
+        }
+        check("A20 reached a busy state to freeze",
+            !s.gameOver && s.shots.any { it.alive && it.kind == K_SHELL },
+            "${s.shots.count { it.alive }} shots in the air " +
+                "(${s.shots.count { it.alive && it.kind == K_SHELL }} of them flak), " +
+                "${s.enemies.count { it.alive }} scouts")
+
+        val before = snapshot(s)
+        val shellFuses = s.shots.filter { it.alive && it.kind == K_SHELL }.map { it.fuse }
+        s.pause()
+        check("A20 a sortie in progress can be paused", s.paused, "")
+        // hold it frozen for ten seconds of wall clock, with the stick hard
+        // over and the trigger down - none of it may reach the world
+        for (j in 0 until 600) { s.climbing = true; s.firing = true; s.update(1f) }
+        check("A20 a pause stops the world completely", snapshot(s) == before,
+            "600 ticks with the stick hard over and the trigger down")
+
+        // ---- the count-in gives the screen back, not immunity -------------
+        s.requestResume()
+        check("A20 resuming starts a count-in", s.frozen() && !s.paused,
+            "resumeCount=${s.resumeCount}")
+        val digits = HashSet<Int>()
+        var counted = 0
+        while (s.frozen()) {
+            digits.add(s.resumeDigit())
+            s.climbing = true
+            s.update(1f); counted++
+            if (counted > 1000) break
+        }
+        check("A20 the count-in is the length it says it is",
+            counted == Tune.RESUME_COUNT.toInt(), "$counted ticks")
+        check("A20 the count-in counts 3 - 2 - 1", digits == setOf(3, 2, 1),
+            digits.sorted().toString())
+        check("A20 the world is still frozen through the count-in",
+            snapshot(s) == before, "every tick of the count-in, not all but one")
+        // the shell that was committed before the pause is still committed
+        val after = s.shots.filter { it.alive && it.kind == K_SHELL }.map { it.fuse }
+        check("A20 a pause is not a way out of a committed shell",
+            after.containsAll(shellFuses),
+            "fuses before $shellFuses, after $after")
+
+        // ---- and then it flies again --------------------------------------
+        val atResume = s.py
+        for (j in 0 until 30) { s.climbing = true; s.update(1f) }
+        check("A20 the world moves again afterwards", s.py < atResume,
+            String.format("%.2f -> %.2f", atResume, s.py))
+
+        // ---- mute is remembered across a launch ---------------------------
+        val store = MemStore()
+        val a = Sim(store)
+        check("A20 sound is on by default", !a.muted, "")
+        a.toggleMute()
+        check("A20 mute survives a relaunch", Sim(store).muted, "")
+    }
+
+    // =====================================================================
     @JvmStatic
     fun main(args: Array<String>) {
         println("=".repeat(78))
@@ -822,6 +946,7 @@ object Audit {
         a17StartGate()
         a18NoMissingGlyphs()
         a19Warmup()
+        a20Pause()
         println("=".repeat(78))
         println("${failures.size} checks failed")
         if (failures.isNotEmpty()) {

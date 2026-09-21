@@ -119,6 +119,42 @@ class Sim(private val store: Store) {
     /** Put the briefing card away without launching anything. */
     fun dismissBriefing() { briefed = true }
 
+    // ---- pause ------------------------------------------------------------
+    // Leaving the app must freeze the sortie, not feed it to the flak. This
+    // lives in Sim rather than in the Android layer so the audit can prove
+    // that a paused world really is stopped - every single thing about it,
+    // not just the aeroplane.
+    var paused = false; private set
+    var resumeCount = 0f; private set
+
+    /** Freeze the sortie. Only meaningful once one is actually in progress. */
+    fun pause() { if (started && !crashed) paused = true }
+
+    /** Start the count-in. The world stays frozen until it runs out. */
+    fun requestResume() {
+        if (!paused) return
+        paused = false
+        resumeCount = Tune.RESUME_COUNT
+    }
+
+    /** 3, 2, 1 - what to print during the count-in, or 0 for "not counting". */
+    fun resumeDigit(): Int =
+        if (resumeCount <= 0f) 0 else ((resumeCount / 60f).toInt() + 1).coerceAtMost(3)
+
+    /** True whenever the world is deliberately stopped. */
+    fun frozen(): Boolean = paused || resumeCount > 0f
+
+    // ---- sound ------------------------------------------------------------
+    // Kept here, not in the Android layer, so it persists with everything
+    // else the player has earned and the renderer can draw the right icon.
+    var muted = false; private set
+
+    fun toggleMute() {
+        muted = !muted
+        store.putFloat("muted", if (muted) 1f else 0f)
+        store.flush()
+    }
+
     // ---- score --------------------------------------------------------------
     var score = 0; private set
     var bestScore = 0; private set
@@ -170,6 +206,7 @@ class Sim(private val store: Store) {
         best = store.getFloat("best", 0f)
         bestScore = store.getFloat("bestScore", 0f).toInt()
         sorties = store.getFloat("sorties", 0f).toInt()
+        muted = store.getFloat("muted", 0f) > 0.5f
         val d = store.getString("dead", "")
         if (d.isNotEmpty()) for (part in d.split(',')) part.toIntOrNull()?.let { destroyed.add(it) }
         reset()
@@ -210,6 +247,8 @@ class Sim(private val store: Store) {
         lineDelta = 0f
         score = 0
         started = false
+        paused = false
+        resumeCount = 0f
         lives = Tune.LIVES
         gameOver = false
         invuln = 0f
@@ -323,6 +362,20 @@ class Sim(private val store: Store) {
         if (crashed) {
             crashTicks += dt
             stepShots(dt); stepBursts(dt); stepPips(dt)
+            return
+        }
+
+        // A pause stops EVERYTHING: the aeroplane, the scroll, the shells
+        // already in the air, the searchlights, the reload timers. `ticks`
+        // keeps running so the card's prompt can still blink.
+        if (paused) return
+        // The count-in is frozen for every one of its ticks; the first tick
+        // that flies is the one after it. Letting the last tick fall through
+        // into live physics would hand the world back half a frame early,
+        // which is exactly the kind of off-by-one nobody ever sees but the
+        // audit has to be able to state plainly.
+        if (resumeCount > 0f) {
+            resumeCount = max(0f, resumeCount - dt)
             return
         }
 

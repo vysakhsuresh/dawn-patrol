@@ -167,6 +167,60 @@ object Art {
     )
 
     // tiny roundel for the lives row
+    // ---- HUD buttons ------------------------------------------------------
+    // Drawn in PAPER on the inked HUD strip. 7x7 so they read at a glance,
+    // with a generous hit rect around them (see hitPause/hitMute below).
+    val SPR_PAUSE = arrayOf(
+        ".XX.XX.",
+        ".XX.XX.",
+        ".XX.XX.",
+        ".XX.XX.",
+        ".XX.XX.",
+        ".XX.XX.",
+        ".XX.XX."
+    )
+    val SPR_SOUND_ON = arrayOf(
+        "...X...",
+        "..XX.X.",
+        ".XXX..X",
+        ".XXX.X.",
+        ".XXX..X",
+        "..XX.X.",
+        "...X..."
+    )
+    val SPR_SOUND_OFF = arrayOf(
+        "...X...",
+        "..XX...",
+        ".XXX.X.",
+        ".XXX..X",
+        ".XXX.X.",
+        "..XX...",
+        "...X..."
+    )
+
+    const val BTN_W = 7
+    const val BTN_H = 7
+    const val BTN_Y = 1
+    const val PAUSE_X = 38
+    const val MUTE_X = 54
+
+    // A 7px icon is 7 game pixels, which on a 1080-wide phone is about 76
+    // physical pixels - fine to see, mean to hit. The touch rect is padded
+    // and covers the full height of the HUD strip, which is why the strip
+    // itself is not a control surface: reaching for pause must never be
+    // read as "open fire".
+    private const val BTN_PAD = 4
+
+    private fun inBtn(gx: Float, gy: Float, x: Int): Boolean =
+        gy >= 0f && gy < HUD_H &&
+            gx >= x - BTN_PAD && gx < x + BTN_W + BTN_PAD
+
+    fun hitPause(gx: Float, gy: Float) = inBtn(gx, gy, PAUSE_X)
+    fun hitMute(gx: Float, gy: Float) = inBtn(gx, gy, MUTE_X)
+
+    /** The HUD strip takes no flight input at all - only its buttons. */
+    fun inHud(gy: Float): Boolean = gy >= 0f && gy < HUD_H
+
     val SPR_LIFE = arrayOf(
         "..X..",
         "XXXXX",

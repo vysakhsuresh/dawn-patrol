@@ -41,6 +41,21 @@ until you press the LEFT half, and that press *is* the climb — so the
 hand-over to physics starts with the nose coming up, never with a plane
 falling out of the sky. Audit A17.
 
+**Pause, and a count-in.** Two buttons sit in the HUD strip between the
+altimeter and the score: pause, and sound. The strip itself takes no flight
+input at all, so reaching for pause can never be read as "open fire". Losing
+window focus — the notification shade, a call, the recents switcher — pauses
+too, rather than handing the sortie back live while you are mid-dive.
+
+A pause stops *everything*: the aeroplane, the scroll, the shells already in
+the air, the searchlights, the reload timers. Resuming runs a 3-2-1 count-in
+over that still-frozen world, so what you look at during the count is exactly
+the situation you are about to be handed back. It is a count-in and **not** a
+moment of invulnerability, on purpose — a shell committed before the pause is
+still committed after it, and A20 proves it by comparing fuses across the
+freeze. Sound is muted while frozen without touching the player's own mute
+setting, which persists across launches.
+
 **Three machines.** A hit costs you one, not the run — you keep the world, the
 score and every wreck you have made, and you are put back in the air with a
 moment of invulnerability. The HUD shows what you have left, and a loss is
@@ -109,6 +124,7 @@ is a statement about the game, not about a model of it.
     A17 the start gate: briefing / ready / flying     loiter holds altitude exactly, |vy| = 0
     A18 no character is drawn as a silent gap         3259 frames across every screen state
     A19 the cold-start warm-up is safe and bounded    2640 frames, stops dead on an expired budget
+    A20 a pause stops the world, and is not an escape 600 frozen ticks, 0 drift, shell fuses unchanged
 
 ## Architecture
 

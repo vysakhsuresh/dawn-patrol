@@ -501,6 +501,12 @@ class Renderer {
             fb.sprite(Art.SPR_BOMB, bx + i * 4, 8, paper)
         }
 
+        // pause + sound, in the dead space between the altimeter and the
+        // score. Paper on the inked strip, so they read without a frame.
+        fb.sprite(Art.SPR_PAUSE, Art.PAUSE_X, Art.BTN_Y, paper)
+        fb.sprite(if (sim.muted) Art.SPR_SOUND_OFF else Art.SPR_SOUND_ON,
+            Art.MUTE_X, Art.BTN_Y, paper)
+
         // front line meter: the long-term objective
         val mx = 4; val mw = Art.GW - 8; val my = 15; val mh = 3
         fb.frameRect(mx, my, mw, mh, paper)
@@ -540,7 +546,36 @@ class Renderer {
             fb.plateText(l, (Art.GW - Fb.textW(l)) / 2, 72, 1, 1, 1, 2)
         }
 
+        if (sim.frozen() && !sim.crashed) pauseCard(sim)
+
         if (sim.crashed) crashCard(sim)
+    }
+
+    /**
+     * PAUSED, and the count-in that follows it.
+     *
+     * The count-in is drawn over a world that is still frozen, so what you
+     * are looking at during "3 - 2 - 1" is exactly the situation you are
+     * about to be handed back: the shell still in the air is still there.
+     */
+    private fun pauseCard(sim: Sim) {
+        // High, just under the HUD. The aeroplane is only up here when it is
+        // at the ceiling, and at the ceiling nothing can reach it - so this
+        // is the one band that never hides the thing about to kill you. The
+        // point of a count-in is to show you the situation you are being
+        // handed back, which a card sitting on top of it would defeat.
+        val d = sim.resumeDigit()
+        if (d > 0) {
+            val n = d.toString()
+            fb.plateText(n, (Art.GW - Fb.textW(n, 2, 4)) / 2, 26, 1, 2, 4, 3)
+            return
+        }
+        val title = "PAUSED"
+        fb.plateText(title, (Art.GW - Fb.textW(title, 2, 2)) / 2, 26, 1, 2, 2, 3)
+        if (((sim.ticks / 22f).toInt() and 1) == 0) {
+            val s2 = "TAP TO RESUME"
+            fb.plateText(s2, (Art.GW - Fb.textW(s2)) / 2, 42, 1, 1, 1, 2)
+        }
     }
 
     /**

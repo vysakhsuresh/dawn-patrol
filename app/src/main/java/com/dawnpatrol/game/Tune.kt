@@ -160,6 +160,14 @@ object Tune {
     // for "between lives" would be a branch that can never run.
     const val GAMEOVER_LOCKOUT = 80f  // ticks before a tap is accepted
 
+    // ---- pause -----------------------------------------------------------
+    // Coming back from a pause straight into live flak is not a pause, it is
+    // an ambush - you may have walked away mid-dive with a shell in the air.
+    // A count-in gives the screen back before the world starts moving. It is
+    // a COUNT-IN and not a moment of invulnerability on purpose: a pause
+    // must not be a way to shrug off a shell that was already committed.
+    const val RESUME_COUNT = 180f     // ticks, i.e. 3 - 2 - 1
+
     // ---- enemy scouts ----------------------------------------------------
     // The fix for "nothing can touch me up high". Flak is a ground weapon
     // and physically cannot reach the ceiling, which made cruising at the

@@ -98,7 +98,21 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private fun stopLoop() {
         running = false
         sound.stopEngine()
+        // Losing focus freezes the sortie instead of handing it back live.
+        // The notification shade, a call, the recents switcher - all of them
+        // used to resume you exactly where you were, which on this game may
+        // be mid-dive with a shell already in the air.
+        releaseThumbs()
+        sim.pause()
         Choreographer.getInstance().removeFrameCallback(this)
+    }
+
+    /** Drop any held finger, so nothing is latched across a freeze. */
+    private fun releaseThumbs() {
+        leftPointer = -1
+        rightPointer = -1
+        sim.climbing = false
+        sim.firing = false
     }
 
     override fun doFrame(frameTimeNanos: Long) {
@@ -125,6 +139,8 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         if (!wasCrashed && sim.crashed) sound.playHit()
         if (countBursts() > burstsBefore) sound.playThud()
 
+        sound.muted = sim.muted
+        sound.suspended = sim.frozen()
         // engine note rises as you dive and bleeds off as you haul back
         sound.setEnginePitch(
             ((sim.speed - Tune.SPEED_MIN) / (Tune.SPEED_MAX - Tune.SPEED_MIN))
@@ -158,6 +174,31 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
                     // the sky. It puts the card away; the plane keeps flying
                     // straight and level until they press LEFT.
                     sim.dismissBriefing()
+                    return true
+                }
+                // The HUD strip is not a control surface: only its buttons
+                // live there, so reaching for pause can never open fire.
+                // dst is empty until the first layout; a touch cannot arrive
+                // before then, but dividing by it would be silent NaN if one
+                // did, and NaN compares false against every hit test.
+                val dw = dst.width(); val dh = dst.height()
+                val gx = if (dw > 0) (event.getX(i) - dst.left) / dw * Art.GW else -1f
+                val gy = if (dh > 0) (event.getY(i) - dst.top) / dh * Art.GH else -1f
+                if (Art.inHud(gy)) {
+                    if (Art.hitMute(gx, gy)) {
+                        sim.toggleMute()
+                        sound.muted = sim.muted
+                        if (!sim.muted) sound.playThud()   // proof it is back
+                    } else if (Art.hitPause(gx, gy)) {
+                        releaseThumbs()
+                        sim.pause()
+                    }
+                    return true
+                }
+                if (sim.frozen()) {
+                    // Any tap outside the HUD starts the count-in, and is
+                    // swallowed - coming back must not also be a climb.
+                    sim.requestResume()
                     return true
                 }
                 val left = event.getX(i) < halfW

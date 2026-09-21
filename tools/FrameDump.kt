@@ -114,6 +114,34 @@ object FrameDump {
             write(r, r.palette(sim.phase()), "$dir/f2_strafe.ppm")
         }
 
+        // ---- B  paused, and the count-in that hands the world back --------
+        run {
+            val sim = Sim(MemStore())
+            sim.dismissBriefing(); sim.start()
+            var t = 0
+            while (t < 40000 && !(sim.shots.any { it.alive && it.kind == K_SHELL } &&
+                    sim.mult > 1 && !sim.gameOver)) {
+                sim.climbing = sim.altitude() < 26f
+                sim.firing = true
+                if (t % 150 == 0) sim.dropBomb()
+                sim.update(1f); t++
+            }
+            sim.pause()
+            // land on a tick where the blinking prompt is lit
+            while (((sim.ticks / 22f).toInt() and 1) != 0) sim.update(1f)
+            r.render(sim)
+            write(r, r.palette(sim.phase()), "$dir/fB_paused.ppm")
+            println("frameB paused: shells=" +
+                sim.shots.count { it.alive && it.kind == K_SHELL } + " mult=" + sim.mult)
+
+            // ...and the same world, mid count-in. Nothing has moved.
+            sim.requestResume()
+            while (sim.resumeDigit() != 2) sim.update(1f)
+            r.render(sim)
+            write(r, r.palette(sim.phase()), "$dir/fC_countin.ppm")
+            println("frameC count-in digit=" + sim.resumeDigit())
+        }
+
         // ---- 3  night, caught in a searchlight ----------------------------
         run {
             val sim = Sim(MemStore())
