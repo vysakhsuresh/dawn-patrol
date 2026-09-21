@@ -72,3 +72,53 @@ if __name__ == "__main__":
     sheet = build_sheet()
     sheet.save(OUT)
     print("saved", OUT, sheet.size)
+
+
+# --------------------------------------------------------------------------
+def verify_shipped(res_dir, out_png):
+    """Mask the files that actually go in the APK, per density bucket.
+
+    Verifying the intermediate would only prove the generator works. This
+    opens the PNGs the build will package, takes the middle 72dp a launcher
+    shows, and cuts it with each mask - at the pixel size that bucket
+    renders at on a real screen.
+    """
+    from PIL import Image, ImageDraw
+    import os
+    buckets = [("mdpi", 108, 48), ("hdpi", 162, 72), ("xhdpi", 216, 96),
+               ("xxhdpi", 324, 144), ("xxxhdpi", 432, 192)]
+    shapes = ["circle", "squircle", "square"]
+    pad, lab = 10, 14
+    W = pad + sum(s + pad for _, _, s in buckets)
+    H = lab + len(shapes) * (192 + pad) + pad
+    sheet = Image.new("RGB", (W, H), (28, 28, 32))
+    d = ImageDraw.Draw(sheet)
+    y = lab
+    for shape in shapes:
+        x = pad
+        for name, layer_px, screen_px in buckets:
+            p = f"{res_dir}/mipmap-{name}/ic_launcher_foreground.png"
+            im = Image.open(p).convert("RGB")
+            assert im.size == (layer_px, layer_px), (p, im.size)
+            v = layer_px * 2 // 3
+            o = (layer_px - v) // 2
+            view = im.crop((o, o, o + v, o + v)).resize(
+                (screen_px, screen_px), Image.LANCZOS)
+            m = Image.new("L", (screen_px, screen_px), 0)
+            dr = ImageDraw.Draw(m)
+            e = screen_px - 1
+            if shape == "circle":
+                dr.ellipse((0, 0, e, e), 255)
+            else:
+                r = int(screen_px * (0.30 if shape == "squircle" else 0.12))
+                dr.rounded_rectangle((0, 0, e, e), radius=r, fill=255)
+            cell = Image.new("RGB", (screen_px, screen_px), (28, 28, 32))
+            cell.paste(view, (0, 0), m)
+            sheet.paste(cell, (x, y + (192 - screen_px) // 2))
+            if shape == shapes[0]:
+                d.text((x, 2), f"{name} {screen_px}px", fill=(230, 220, 200))
+            x += screen_px + pad
+        y += 192 + pad
+    os.makedirs(os.path.dirname(out_png), exist_ok=True)
+    sheet.save(out_png)
+    print("wrote", out_png)

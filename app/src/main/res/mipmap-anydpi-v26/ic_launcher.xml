@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The supplied badge artwork, as an adaptive icon.
+
+  The foreground PNG is a full 108dp layer, but the badge inside it is
+  scaled to exactly the 72dp a launcher actually shows, with its edges
+  stretched out to fill the rest. Drawn full-bleed instead, the word DAWN
+  is cropped away completely before any mask is applied - see
+  out/icon/v1_fullbleed_masks.png, which is why that was rejected.
+
+  The background colour is the artwork's own sky, so anything a launcher
+  reveals while it pans matches.
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
 </adaptive-icon>

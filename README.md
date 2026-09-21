@@ -216,9 +216,23 @@ deep-dusk keyframe, where both sides are near-black, so nothing visibly jumps.
    dying early looks exactly like content being hard to reach, so the test
    pilot got good first (`tools/TestPilot.kt`), and then the phase length was
    set from what it measured. Audit A16.
-9. **Adaptive icons:** VectorDrawable only (`<path>`/`<group>`/`<clip-path>`,
-   no `<circle>`), content inside the 66% safe circle, verified under circle,
-   squircle and square masks. `mock/icon_masks.py`, `out/icon_masks.png`.
+9. **Adaptive icons: the launcher shows less than you think.** Only the
+   middle 72dp of the 108dp layer is ever displayed, and *then* a mask cuts
+   it. Drawn full-bleed, the supplied badge loses the word DAWN entirely
+   before any mask is applied (`out/icon/v1_fullbleed_masks.png`). Three
+   more traps, all found by looking rather than reasoning:
+   a rounded-square badge square-cropped keeps four dark wedges of the page
+   behind it, which show as dirty corners under a square mask — repaired by
+   extending each row outward from the parchment's measured corner arc;
+   the circular mask reaches the *outermost, highest* glyphs first, so it
+   cut the tops off DAWN at full size and the art is placed at 0.92 of the
+   viewport with a 3% drop (`out/icon/placement.png`); and fitting the
+   themed monochrome layer to the sprite's bounding box wasted 8% of the
+   safe circle, because the aeroplane's box corners are empty — it is fitted
+   to the drawn ink instead. Everything is verified against the files that
+   actually ship, per density bucket, in `out/icon/shipped_masks.png`.
+   VectorDrawable still supports `<path>`/`<group>`/`<clip-path>` only — no
+   `<circle>`, no `cx`/`cy`.
 
 ## About `mock/`
 
