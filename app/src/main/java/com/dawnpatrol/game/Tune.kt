@@ -119,12 +119,61 @@ object Tune {
     // ---- the front line --------------------------------------------------
     // Not a distance score. Destroying things pushes the line your way;
     // flying past live targets lets it creep back.
-    const val LINE_DEPOT = 0.028f
-    const val LINE_AA = 0.011f
-    const val LINE_TANK = 0.014f
-    const val LINE_BALLOON = 0.017f
-    const val LINE_CREEP = 0.0000145f // per row flown, back toward the enemy
+    // Scaled x3 from the original values, measured: at the old rates a
+    // strong sortie moved the meter +0.18, so from a 0.42 start it took
+    // three good sorties to fill - too far away to be a goal you play
+    // toward. At these rates a strong sortie takes a sector and a poor one
+    // banks visible progress toward the next.
+    const val LINE_DEPOT = 0.085f
+    const val LINE_AA = 0.034f
+    const val LINE_TANK = 0.042f
+    const val LINE_BALLOON = 0.052f
+    const val LINE_CREEP = 0.0000435f // per row flown, back toward the enemy
     const val LINE_START = 0.42f
+
+    // ---- the advancing front ----------------------------------------------
+    // MEASURED, not guessed. Before this, every sortie started at worldX 0,
+    // so every sortie flew the IDENTICAL ground - same terrain, same
+    // targets, forever - and because destroyed slots persist, the score for
+    // playing exactly as well decayed 2260 -> 900 -> 770 -> 660 and then
+    // flatlined. The game punished you for playing it.
+    //
+    // Now a sortie launches from the front line itself. Push the line and
+    // your next sortie starts over fresh country; lose it and you are sent
+    // back over your own burning wrecks, which is both the honest outcome
+    // and the game's own stated fantasy.
+    //
+    // The scale comes from the test pilot: a strong sortie moves the line
+    // +0.18 and covers ~2075 rows. 11000 makes that worth almost exactly one
+    // sortie of new ground, so playing well buys a brand new map and playing
+    // badly does not.
+    // Filling the meter TAKES the sector: the front jumps forward by this
+    // much, the meter resets, and the next sortie launches over ground
+    // nobody has flown. One mechanism, one payoff, and a meter that can
+    // never saturate and sit dead at 1.00 the way a one-way ratchet does.
+    const val SECTOR_ROWS = 2400f
+    const val PTS_SECTOR = 1500       // the capture bonus
+    const val FRONT_MAX_BACK = 900f   // rows the front can give up at once
+
+    // ---- grazing ------------------------------------------------------------
+    // The whole game says "accuracy demands altitude", but surviving close
+    // flak paid nothing, so the safe play and the brave play scored the same
+    // once you lived. A burst that misses by a hair now pays - which is the
+    // moment the player's pulse actually moves.
+    // MEASURED: at 9.0 a campaign averaged 0.1 grazes a sortie, because at
+    // low level the gun's aim error is only 1.4 rows, so a shell that gets
+    // that close mostly just kills you - the near-miss band was a sliver
+    // exactly where the player is bravest. 14 rows makes "that was close"
+    // something you feel a few times a sortie, which is the whole point.
+    const val GRAZE_R = 14.0f         // rows; outside FLAK_LETHAL, inside this
+    const val PTS_GRAZE = 60
+
+    // ---- kill chains ---------------------------------------------------------
+    // Kills inside the window stack. Rewards a planned strafing run over
+    // potting one target and climbing away.
+    const val CHAIN_WINDOW = 110f     // ticks since the last kill
+    const val PTS_CHAIN = 45          // x the chain length
+    const val CHAIN_MAX = 12
 
     // ---- day / night ------------------------------------------------------
     // Five phases: dawn, day, dusk, deep dusk, night. MEASURED, not guessed:
@@ -196,6 +245,10 @@ object Tune {
 
     // ---- pacing -----------------------------------------------------------
     const val WARMUP_ROWS = 260f      // quiet run-in before the guns wake up
+
+    // How close to your own best counts as "so close". The end card says it
+    // out loud, because "180 rows short" is what makes someone tap again.
+    const val SO_CLOSE = 0.12f        // fraction of best
 
     // The aircraft flies straight and level until the player's first touch.
     // Opening on a plane already falling out of the sky reads as a bug and

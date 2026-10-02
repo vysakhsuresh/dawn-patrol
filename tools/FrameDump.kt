@@ -142,6 +142,67 @@ object FrameDump {
             println("frameC count-in digit=" + sim.resumeDigit())
         }
 
+        // ---- D  the orders screen, and the card that sells another sortie -
+        run {
+            val store = MemStore()
+            // play a few sorties so there is real progress to draw
+            var last: Sim? = null
+            for (i in 0 until 5) {
+                val s = Sim(store)
+                s.dismissBriefing(); s.start()
+                var t = 0
+                while (t < 60000 && !s.gameOver) {
+                    s.climbing = s.altitude() < 30f
+                    s.firing = true
+                    if (t % 120 == 0) s.dropBomb()
+                    s.update(1f); t++
+                }
+                last = s
+            }
+            // the READY screen, with orders and the sector you launch into
+            val ready = Sim(store)
+            ready.dismissBriefing()
+            var t = 0
+            while (t < 140) { ready.update(1f); t++ }
+            r.render(ready)
+            write(r, r.palette(ready.phase()), "$dir/fD_orders.ppm")
+            println("frameD rank=" + ready.rank + " front=" + ready.frontX.toInt() +
+                " orders=" + ready.orders.joinToString(" ") { it.text() })
+
+            // and the end card from the sortie that just finished
+            val s = last!!
+            while (!s.canRestart()) s.update(1f)
+            r.render(s)
+            write(r, r.palette(s.phase()), "$dir/fE_endcard.ppm")
+            println("frameE score=" + s.score + " sectors=" + s.sectors +
+                " front+" + s.frontMoved.toInt() + " promoted=" + s.promoted)
+        }
+
+        // ---- F  a sector being taken, mid-flight --------------------------
+        run {
+            val store = MemStore()
+            var shot = false
+            for (attempt in 0 until 8) {
+                val s = Sim(store)
+                s.dismissBriefing(); s.start()
+                var t = 0
+                while (t < 60000 && !s.gameOver && s.sectorFlash <= 0f) {
+                    s.climbing = s.altitude() < 30f
+                    s.firing = true
+                    if (t % 110 == 0) s.dropBomb()
+                    s.update(1f); t++
+                }
+                if (s.sectorFlash > 0f) {
+                    r.render(s)
+                    write(r, r.palette(s.phase()), "$dir/fF_sector.ppm")
+                    println("frameF sector taken, score=" + s.score)
+                    shot = true
+                    break
+                }
+            }
+            if (!shot) println("frameF SKIPPED - no capture in 8 sorties")
+        }
+
         // ---- 3  night, caught in a searchlight ----------------------------
         run {
             val sim = Sim(MemStore())

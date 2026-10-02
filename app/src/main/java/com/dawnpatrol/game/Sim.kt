@@ -49,6 +49,7 @@ class Shot {
 
 class Burst {
     var alive = false
+    var grazed = false     // already paid out as a near miss
     var x = 0f; var y = 0f
     var age = 0f
     var span = 0f          // ticks it stays on screen
@@ -93,6 +94,7 @@ class Sim(private val store: Store) {
     // ---- greed -----------------------------------------------------------
     var mult = 1; private set
     private var lowTicks = 0f
+    private var lowRows = 0f      // fractional carry for the LOW ROWS order
     private var highTicks = 0f
 
     // ---- start gate -------------------------------------------------------
@@ -170,12 +172,45 @@ class Sim(private val store: Store) {
     var linePct = Tune.LINE_START; private set
     var lineDelta = 0f; private set   // this sortie only, for the end card
 
+    /**
+     * Where the next sortie takes off from. THE fix for the worst thing
+     * about this game: every run used to start at worldX 0, so every run
+     * flew the identical ground, and since destroyed slots persist the
+     * reward for identical play decayed by 71% over four sorties and then
+     * flatlined. The front is a real place now - win ground and you get
+     * fresh country, lose it and you fly back over your own wrecks.
+     */
+    var frontX = 0.0; private set
+
+    /** Rows of new ground the last sortie won (or gave up, if negative). */
+    var frontMoved = 0f; private set
+    /** Sectors taken this sortie - the thing worth bragging about. */
+    var sectors = 0; private set
+    var sectorFlash = 0f; private set
+
+    // ---- orders and rank ----------------------------------------------------
+    var rank = 0; private set
+    var orders: Array<Order> = Orders.forRank(0).map {
+        Order(it, Orders.target(it, 0)) }.toTypedArray()
+    var promoted = false; private set       // this sortie earned a promotion
+    var ordersDone = 0; private set         // orders cleared this sortie
+
+    // ---- chain and graze -----------------------------------------------------
+    var chain = 0; private set
+    var bestChain = 0; private set
+    private var chainTimer = 0f
+    var chainFlash = 0f; private set
+    var grazes = 0; private set
+    var grazeFlash = 0f; private set
+
     // ---- tally -------------------------------------------------------------
     var killsAA = 0; private set
     var killsDepot = 0; private set
     var killsTank = 0; private set
     var killsBalloon = 0; private set
     var best = 0f; private set
+    /** The best BEFORE this run, so the card can say how close it came. */
+    var lastBest = 0f; private set
 
     // ---- world state --------------------------------------------------------
     val destroyed = HashSet<Int>()
@@ -207,6 +242,17 @@ class Sim(private val store: Store) {
         bestScore = store.getFloat("bestScore", 0f).toInt()
         sorties = store.getFloat("sorties", 0f).toInt()
         muted = store.getFloat("muted", 0f) > 0.5f
+        frontX = store.getFloat("front", 0f).toDouble()
+        rank = store.getFloat("rank", 0f).toInt().coerceAtLeast(0)
+        makeOrders()
+        // progress is stored as three plain numbers; a set that no longer
+        // matches the rank (because the ladder was retuned) just starts over
+        // rather than restoring nonsense
+        val saved = store.getString("orders", "")
+        val parts = saved.split(',')
+        if (parts.size == orders.size) {
+            for (i in orders.indices) parts[i].toIntOrNull()?.let { orders[i].restore(it) }
+        }
         val d = store.getString("dead", "")
         if (d.isNotEmpty()) for (part in d.split(',')) part.toIntOrNull()?.let { destroyed.add(it) }
         reset()
@@ -217,6 +263,9 @@ class Sim(private val store: Store) {
         store.putFloat("best", best)
         store.putFloat("bestScore", bestScore.toFloat())
         store.putFloat("sorties", sorties.toFloat())
+        store.putFloat("front", frontX.toFloat())
+        store.putFloat("rank", rank.toFloat())
+        store.putString("orders", orders.joinToString(",") { it.progress.toString() })
         // The world is endless, so the destroyed set cannot grow forever.
         // Keep the most recent slots - the ones the player may fly back over.
         val keep = destroyed.sortedDescending().take(512)
@@ -226,8 +275,78 @@ class Sim(private val store: Store) {
 
     private var introBaseY = (Art.HORIZON - 52).toFloat()
 
+    private fun makeOrders() {
+        orders = Orders.forRank(rank).map { Order(it, Orders.target(it, rank)) }
+            .toTypedArray()
+    }
+
+    /**
+     * Bank what the sortie achieved, then move the front.
+     *
+     * Called once when a run ends, never per-frame, so the front can only
+     * move by whole sorties and a player can always point at the thing that
+     * moved it.
+     */
+    /**
+     * The meter is full: the sector is taken.
+     *
+     * This is the payoff the game was missing. It can fire mid-sortie,
+     * which is the point - it is a thing that HAPPENS to you while you are
+     * flying, not a number you read on a card afterwards. The front jumps a
+     * sector, the meter resets to face the next one, and the next sortie
+     * launches over ground nobody has flown.
+     */
+    private fun captureSector() {
+        frontX += Tune.SECTOR_ROWS
+        sectors++
+        sectorFlash = Tune.LIFE_FLASH
+        linePct = Tune.LINE_START
+        score += Tune.PTS_SECTOR * mult
+        save()
+    }
+
+    private fun endSortie() {
+        // YOU HOLD THE GROUND YOU FLEW OVER, AS FAR AS THE LINE SAYS YOU DO.
+        //
+        // One sentence, and the meter in the HUD now means something exact:
+        // it is the fraction of today's ground you keep. Fly 2000 rows with
+        // the line at 0.8 and the next sortie starts 1600 rows further on,
+        // over country nobody has seen. Fly the same 2000 rows achieving
+        // nothing and you keep almost none of it and have to do it again.
+        //
+        // Captures (filling the meter) have already banked a whole sector
+        // the moment they happened, so a capture counts even if the sortie
+        // ends badly ten seconds later.
+        frontMoved = distance * linePct
+        frontX += frontMoved
+        // orders that measure a whole sortie are settled here
+        bumpOrder(Orders.ROWS, distance.toInt())
+        bumpOrder(Orders.SCORE, score)
+        reachOrder(Orders.CHAIN, bestChain)
+        if (orders.all { it.done } && !Orders.isTopRank(rank)) {
+            rank++
+            promoted = true
+            makeOrders()
+        } else if (orders.all { it.done }) {
+            // at the top of the ladder the orders keep coming, harder
+            promoted = true
+            makeOrders()
+        }
+        save()
+    }
+
+    private fun bumpOrder(type: Int, n: Int) {
+        for (o in orders) if (o.type == type && o.bump(n)) ordersDone++
+    }
+
+    private fun reachOrder(type: Int, v: Int) {
+        for (o in orders) if (o.type == type && o.reach(v)) ordersDone++
+    }
+
     fun reset() {
-        camX = 0.0
+        // Launch from the front line, not from worldX 0. This one line is
+        // what makes a second sortie a different game from the first.
+        camX = frontX
         py = (Art.HORIZON - 52).toFloat()
         introBaseY = py
         vy = 0f
@@ -249,6 +368,10 @@ class Sim(private val store: Store) {
         started = false
         paused = false
         resumeCount = 0f
+        chain = 0; bestChain = 0; chainTimer = 0f; chainFlash = 0f
+        grazes = 0; grazeFlash = 0f
+        promoted = false; ordersDone = 0
+        frontMoved = 0f; sectors = 0; sectorFlash = 0f
         lives = Tune.LIVES
         gameOver = false
         invuln = 0f
@@ -406,9 +529,19 @@ class Sim(private val store: Store) {
         // the line creeps back while you are just sightseeing
         linePct = (linePct - Tune.LINE_CREEP * speed * dt).coerceIn(0f, 1f)
 
+        if (chainTimer > 0f) {
+            chainTimer -= dt
+            if (chainTimer <= 0f) { chainTimer = 0f; chain = 0 }
+        }
+        if (chainFlash > 0f) chainFlash = max(0f, chainFlash - dt)
+        if (sectorFlash > 0f) sectorFlash = max(0f, sectorFlash - dt)
+        if (grazeFlash > 0f) grazeFlash = max(0f, grazeFlash - dt)
+
         // ---- greed meter --------------------------------------------------
         if (altitude() < Tune.LOW_ALT) {
             lowTicks += dt; highTicks = 0f
+            lowRows += speed * dt
+            while (lowRows >= 1f) { lowRows -= 1f; bumpOrder(Orders.LOW_ROWS, 1) }
             val step = 1 + (lowTicks / Tune.MULT_STEP).toInt()
             mult = min(Tune.MULT_MAX, step)
         } else {
@@ -521,10 +654,12 @@ class Sim(private val store: Store) {
                 e.alive = false
                 val earned = Tune.PTS_ENEMY * mult
                 score += earned
+                bumpOrder(Orders.SCOUTS, 1)
+                val bonus = registerKill()
                 detonate(e.x + 8f, e.y + 4f, 8f, false)
                 freePip()?.let {
                     it.alive = true; it.x = e.x; it.y = e.y - 8f; it.age = 0f
-                    it.text = "+" + earned
+                    it.text = if (bonus > 0) "CHAIN X" + chain else "+" + earned
                 }
                 return true
             }
@@ -578,6 +713,25 @@ class Sim(private val store: Store) {
         }
     }
 
+    /**
+     * Register a kill and return the chain bonus it earned.
+     *
+     * Kills inside CHAIN_WINDOW stack. This is what turns a strafing run
+     * into a plan - lining three targets up on one pass is worth noticeably
+     * more than potting one and climbing away, which is exactly the
+     * behaviour the game wants to reward and previously did not.
+     */
+    private fun registerKill(): Int {
+        chain = if (chainTimer > 0f) minOf(Tune.CHAIN_MAX, chain + 1) else 1
+        chainTimer = Tune.CHAIN_WINDOW
+        if (chain > bestChain) bestChain = chain
+        if (chain < 2) return 0
+        chainFlash = 44f
+        val bonus = Tune.PTS_CHAIN * chain * mult
+        score += bonus
+        return bonus
+    }
+
     private fun killSlot(k: Int, type: Int, x: Float, y: Float) {
         if (!destroyed.add(k)) return
         var pts = 0
@@ -591,12 +745,21 @@ class Sim(private val store: Store) {
         } * mult
         val earned = pts * mult
         score += earned
-        linePct = (linePct + gain).coerceIn(0f, 1f)
+        linePct += gain
         lineDelta += gain
+        if (linePct >= 1f) captureSector()
+        linePct = linePct.coerceIn(0f, 1f)
+        when (type) {
+            World.DEPOT -> bumpOrder(Orders.DEPOTS, 1)
+            World.AA_GUN, World.LIGHT -> bumpOrder(Orders.GUNS, 1)
+            World.BALLOON -> bumpOrder(Orders.BALLOONS, 1)
+            World.TANK -> bumpOrder(Orders.TANKS, 1)
+        }
+        val bonus = registerKill()
         detonate(x, y - 4f, 7f, false)
         freePip()?.let {
             it.alive = true; it.x = x; it.y = y - 14f; it.age = 0f
-            it.text = "+" + earned
+            it.text = if (bonus > 0) "CHAIN X" + chain else "+" + earned
         }
         gunTimers.remove(k)
     }
@@ -605,13 +768,14 @@ class Sim(private val store: Store) {
         val b = freeBurst() ?: return
         b.alive = true; b.x = x; b.y = y; b.age = 0f
         b.span = 26f; b.r = r
+        b.grazed = false
         b.lethal = if (lethal) 5f else 0f
     }
 
     private fun dustPuff(x: Float, y: Float) {
         val b = freeBurst() ?: return
         b.alive = true; b.x = x; b.y = y - 1f; b.age = 0f
-        b.span = 9f; b.r = 3f; b.lethal = 0f
+        b.span = 9f; b.r = 3f; b.lethal = 0f; b.grazed = false
     }
 
     private fun stepBursts(dt: Float) {
@@ -621,9 +785,35 @@ class Sim(private val store: Store) {
             if (b.lethal > 0f) {
                 b.lethal -= dt
                 if (!crashed && invuln <= 0f && burstHitsPlane(b)) hit("FLAK")
+                // A near miss pays. Without this the brave line and the safe
+                // line scored exactly the same once you survived, so the
+                // game's whole "accuracy demands altitude" bargain had no
+                // upside you could feel. Scored once per burst, and only for
+                // a burst that was genuinely trying to kill you.
+                else if (!crashed && !b.grazed && invuln <= 0f &&
+                         distToPlane(b.x, b.y) <= Tune.GRAZE_R) {
+                    b.grazed = true
+                    grazes++
+                    grazeFlash = 36f
+                    val earned = Tune.PTS_GRAZE * mult
+                    score += earned
+                    bumpOrder(Orders.GRAZES, 1)
+                    freePip()?.let {
+                        it.alive = true; it.x = b.x; it.y = py - 6f; it.age = 0f
+                        it.text = "GRAZED +" + earned
+                    }
+                }
             }
             if (b.age >= b.span) b.alive = false
         }
+    }
+
+    /** Distance from a point to the plane's box - 0 when it is inside. */
+    private fun distToPlane(bx: Float, by: Float): Float {
+        val x0 = (camX + Art.PLAYER_X).toFloat()
+        val dx = bx - bx.coerceIn(x0, x0 + Tune.PLANE_W)
+        val dy = by - by.coerceIn(py, py + Tune.PLANE_H)
+        return kotlin.math.sqrt(dx * dx + dy * dy)
     }
 
     private fun burstHitsPlane(b: Burst): Boolean {
@@ -922,9 +1112,10 @@ class Sim(private val store: Store) {
             gameOver = true
             crashCause = cause
             crashTicks = 0f
+            lastBest = best
             if (distance > best) best = distance
             if (score > bestScore) bestScore = score
-            save()
+            endSortie()      // banks the orders, moves the front, saves
         } else {
             respawn()
         }

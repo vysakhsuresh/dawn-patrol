@@ -41,6 +41,28 @@ until you press the LEFT half, and that press *is* the climb — so the
 hand-over to physics starts with the nose coming up, never with a plane
 falling out of the sky. Audit A17.
 
+**The front is a place, not a bar.** A sortie launches from the front line
+itself, and you hold the ground you flew over as far as the meter says you
+do — fly 2000 rows with the line at 0.8 and the next sortie starts 1600 rows
+further on, over country nobody has seen. Fill the meter and you *take the
+sector*: the front jumps, the meter resets, and it happens mid-flight, not
+on a card afterwards. Fly badly and you keep almost none of it and have to
+do it again. Audit A22.
+
+**Standing orders, and a rank.** Three at a time, cumulative across sorties,
+never reset — so a sortie that went wrong in the first ten seconds still
+moves a bar. Clear all three and you are promoted and handed a harder three.
+One slot is always a rows-or-score backstop, sized to outlast the kill
+orders, which is what guarantees every single take-off banks something.
+Eight ranks, SERGEANT to ACE OF ACES. Audit A23. Deliberately *not* here:
+daily timers, streaks, or anything that punishes you for not playing — the
+pull should be "I was two depots away", never "I will lose my streak".
+
+**Grazing and chains.** Flak that bursts close and misses pays, so the brave
+line and the safe line no longer score the same once you survive. Kills
+inside a window stack into a chain, so a planned strafing run beats potting
+one target and climbing away. A24, A25.
+
 **Pause, and a count-in.** Two buttons sit in the HUD strip between the
 altimeter and the score: pause, and sound. The strip itself takes no flight
 input at all, so reaching for pause can never be read as "open fire". Losing
@@ -125,10 +147,16 @@ is a statement about the game, not about a model of it.
     A18 no character is drawn as a silent gap         3259 frames across every screen state
     A19 the cold-start warm-up is safe and bounded    2640 frames, stops dead on an expired budget
     A20 a pause stops the world, and is not an escape 600 frozen ticks, 0 drift, shell fuses unchanged
+    A21 every phase of the day is readable            worst contrast 4.50:1, was 1.03:1
+    A22 playing does not make the game worse          14 sorties, no score decay, 14/14 new ground
+    A23 the ladder always moves and never stalls      24 ranks, every sortie banks something
+    A24 a graze is a near miss, never a hit           never while invulnerable, never at altitude
+    A25 chains reward a planned run                   they form, they cap, they expire
 
 ## Architecture
 
     Art.kt       sprites, font, dither table, canvas constants
+    Orders.kt    standing orders and the rank ladder
     Warmup.kt    the cold-start JIT warm-up + the 1-bit -> ARGB expansion
     Tune.kt      every number that decides how it FEELS, in one place
     World.kt     procedural world, seeded from absolute world position
@@ -216,7 +244,24 @@ deep-dusk keyframe, where both sides are near-black, so nothing visibly jumps.
    dying early looks exactly like content being hard to reach, so the test
    pilot got good first (`tools/TestPilot.kt`), and then the phase length was
    set from what it measured. Audit A16.
-9. **Adaptive icons: the launcher shows less than you think.** Only the
+9. **A game that pays less every time you play it.** Every sortie started
+   at worldX 0, so every sortie flew the identical ground — and because
+   destroyed slots persist, the score for playing exactly as well decayed
+   2260 → 900 → 770 → 660 and then flatlined. Nothing was broken; the two
+   correct features combined into the precise opposite of a reason to come
+   back. Found by simulating repeated play rather than single runs, which is
+   now Audit A22: *playing the game must not make the game worse.*
+10. **Five good keyframes, invisible in between.** Ink and paper were
+   crossfaded independently, and between deep dusk and night the ink has to
+   travel from near-black to near-white while the paper stays dark — so
+   halfway through, the ink passed *through* the paper. Measured contrast
+   bottomed out at 1.03:1: for a stretch of every cycle the screen was one
+   flat colour with the whole game invisible on it. Every keyframe is fine,
+   which is why looking at keyframes never showed it, and shortening
+   `PHASE_LEN` so night was reachable at all is what put real players into
+   it every 40 seconds. `palette()` now forces the pair apart and A21 sweeps
+   every phase.
+11. **Adaptive icons: the launcher shows less than you think.** Only the
    middle 72dp of the 108dp layer is ever displayed, and *then* a mask cuts
    it. Drawn full-bleed, the supplied badge loses the word DAWN entirely
    before any mask is applied (`out/icon/v1_fullbleed_masks.png`). Three

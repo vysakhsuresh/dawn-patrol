@@ -60,12 +60,79 @@ class Renderer {
      * either side of it the earth is near-black and the sky is near-black,
      * so nothing visibly jumps when ink and paper swap roles.
      */
+    // ---- contrast guard ---------------------------------------------------
+    // SHIPPED BUG, found by measuring the whole cycle instead of looking at
+    // the five keyframes. Ink and paper are crossfaded independently, and
+    // between deep dusk and night the ink has to travel from near-black to
+    // near-white while the paper stays dark - so halfway through, the ink
+    // PASSES THROUGH the paper colour. Measured contrast bottomed out at
+    // 1.03:1 at phase 2.9 and 1.08:1 at 4.5: for a stretch of every cycle
+    // the screen was a single flat colour with the entire game invisible on
+    // it. The keyframes are all fine, which is why five static previews
+    // never showed it, and shortening PHASE_LEN so night was reachable at
+    // all is what put real players into it every 40 seconds.
+    //
+    // Rather than hand-tune a crossfade that happens to miss, the pair is
+    // forced apart after interpolation. Audit A21 sweeps every phase.
+    private val MIN_CONTRAST = 4.5f
+
+    private fun srgb(v: Int): Float {
+        val c = v / 255f
+        return if (c <= 0.03928f) c / 12.92f
+               else Math.pow(((c + 0.055f) / 1.055f).toDouble(), 2.4).toFloat()
+    }
+
+    fun relLum(c: Int): Float =
+        0.2126f * srgb((c shr 16) and 0xFF) +
+        0.7152f * srgb((c shr 8) and 0xFF) +
+        0.0722f * srgb(c and 0xFF)
+
+    fun contrast(a: Int, b: Int): Float {
+        val la = relLum(a); val lb = relLum(b)
+        return (maxOf(la, lb) + 0.05f) / (minOf(la, lb) + 0.05f)
+    }
+
+    /** Scale a colour's channels toward black (k<1) or white (k>1). */
+    private fun shade(c: Int, k: Float): Int {
+        fun ch(v: Int): Int =
+            (if (k <= 1f) v * k else 255f - (255f - v) * (2f - k))
+                .toInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (ch((c shr 16) and 0xFF) shl 16) or
+            (ch((c shr 8) and 0xFF) shl 8) or ch(c and 0xFF)
+    }
+
+    /**
+     * Push the darker one darker and the lighter one lighter until they are
+     * legible. Hue is left alone, so the moment still reads as that time of
+     * day - it just stops being invisible.
+     */
+    private fun enforce(ink: Int, paper: Int): Pair<Int, Int> {
+        var a = ink; var b = paper
+        var guard = 0
+        while (contrast(a, b) < MIN_CONTRAST && guard < 48) {
+            if (relLum(a) <= relLum(b)) { a = shade(a, 0.86f); b = shade(b, 1.14f) }
+            else { a = shade(a, 1.14f); b = shade(b, 0.86f) }
+            guard++
+        }
+        return a to b
+    }
+
+    /** The crossfade WITHOUT the guard - kept so Audit A21 can show the bug. */
+    fun rawPalette(phase: Float): Pal {
+        val i = floor(phase.toDouble()).toInt().coerceIn(0, 4)
+        val j = (i + 1) % 5
+        val t = phase - i
+        return Pal(lerpRgb(keys[i].ink, keys[j].ink, t),
+                   lerpRgb(keys[i].paper, keys[j].paper, t), keys[i].night)
+    }
+
     fun palette(phase: Float): Pal {
         val i = floor(phase.toDouble()).toInt().coerceIn(0, 4)
         val j = (i + 1) % 5
         val t = phase - i
         val a = keys[i]; val b = keys[j]
-        return Pal(lerpRgb(a.ink, b.ink, t), lerpRgb(a.paper, b.paper, t), a.night)
+        val (ink, paper) = enforce(lerpRgb(a.ink, b.ink, t), lerpRgb(a.paper, b.paper, t))
+        return Pal(ink, paper, a.night)
     }
 
     // =====================================================================
@@ -519,6 +586,28 @@ class Renderer {
         fb.vline(mx + 1 + fill, my - 1, my + mh, paper)
         for (x in 0 until Art.GW step 2) fb.set(x, Art.HUD_H - 1, paper)
 
+        // CHAIN - the loudest thing on screen while it is running, because
+        // it is the only reward with a clock on it.
+        if (sim.chain >= 2 && sim.chainFlash > 0f && !sim.crashed) {
+            val c = "CHAIN X" + sim.chain
+            fb.plateText(c, (Art.GW - Fb.textW(c, 1, 2)) / 2, 34, 1, 1, 2, 2)
+        }
+        if (sim.grazeFlash > 0f && !sim.crashed &&
+            ((sim.grazeFlash / 6f).toInt() and 1) == 0) {
+            val g = "GRAZED"
+            fb.plateText(g, (Art.GW - Fb.textW(g)) / 2, 24, 1, 1, 1, 1)
+        }
+        // Taking a sector is the biggest thing that can happen in a sortie
+        // and it happens mid-flight, so it is announced mid-flight.
+        // ...but not over the end card: a capture in the last seconds of a
+        // sortie left the announcement half-buried under GAME OVER.
+        if (sim.sectorFlash > 0f && !sim.crashed) {
+            val t1 = "SECTOR TAKEN"
+            fb.plateText(t1, (Art.GW - Fb.textW(t1, 1, 2)) / 2, 50, 1, 1, 2, 3)
+            val t2 = "+" + Tune.PTS_SECTOR + "  FRONT ADVANCES"
+            fb.plateText(t2, (Art.GW - Fb.textW(t2)) / 2, 64, 1, 1, 1, 2)
+        }
+
         // greed meter - only shows when it is actually earning
         if (sim.mult > 1) {
             fb.plateText("X" + sim.mult, Art.PLAYER_X + 2, Math.round(sim.py).toInt() - 12,
@@ -656,9 +745,14 @@ class Renderer {
      * touches should be the one that keeps them in the air.
      */
     private fun startPrompt(sim: Sim) {
+        // The orders are the reason to take off, so they are the thing on
+        // screen while the player's thumb is hovering.
+        ordersBlock(sim, 32)
+        val sect = "SECTOR " + (sim.frontX / Tune.SECTOR_ROWS).toInt()
+        fb.plateText(sect, 6, 20, 1, 1, 1, 1)
         if (sim.bestScore > 0) {
             val b = "BEST " + sim.bestScore
-            fb.plateText(b, (Art.GW - Fb.textW(b)) / 2, 40, 1, 1, 1, 2)
+            fb.plateText(b, Art.GW - 6 - Fb.textW(b), 20, 1, 1, 1, 1)
         }
         if (((sim.ticks / 22f).toInt() and 1) == 0) {
             val s2 = "HOLD LEFT TO FLY"
@@ -669,28 +763,88 @@ class Renderer {
         fb.plateText(s3, (Art.GW - Fb.textW(s3)) / 2, 160, 1, 1, 1, 1)
     }
 
-    private fun crashCard(sim: Sim) {
-        // `crashed` only ever means the run is over, so there is one title.
-        val title = "GAME OVER"
-        val tw = Fb.textW(title, 2, 2)
-        fb.plateText(title, (Art.GW - tw) / 2, 36, 1, 2, 2, 3)
-        val lines = listOf(
-            "SCORE  " + sim.score,
-            "BEST   " + sim.bestScore,
-            "CAUSE  " + sim.crashCause,
-            "LINE   " + (sim.linePct * 100f).toInt() + "%",
-            "GUNS " + sim.killsAA + "  DEPOTS " + sim.killsDepot,
-            "ROWS   " + sim.distance.toInt()
-        )
-        var y = 56
-        for (l in lines) {
-            val w = Fb.textW(l)
-            fb.plateText(l, (Art.GW - w) / 2, y, 1, 1, 1, 1)
-            y += 8
+    /**
+     * The three standing orders, with a bar each.
+     *
+     * Bars, not just numbers: "3/6" is arithmetic, a half-filled bar is a
+     * feeling. They are the reason to start a sortie, so they go where the
+     * player is already looking before one.
+     */
+    private fun ordersBlock(sim: Sim, top: Int) {
+        // One knocked-out panel rather than per-line plates. The palette
+        // swings through the whole day, and text floated straight onto the
+        // sky disappeared against the dusk keyframes; a panel is one
+        // guaranteed paper field with ink on it, which the contrast guard
+        // in `palette` keeps legible at every phase.
+        val h = 13 * sim.orders.size + 12
+        fb.rect(3, top - 3, Art.GW - 6, h, 0)
+        fb.frameRect(3, top - 3, Art.GW - 6, h, 1)
+
+        val r = "RANK  " + Orders.rankName(sim.rank)
+        fb.text(r, (Art.GW - Fb.textW(r)) / 2, top, 1)
+        fb.hline(6, Art.GW - 7, top + 7, 1)
+
+        var y = top + 11
+        for (o in sim.orders) {
+            fb.text(o.text(), 7, y, 1)
+            // the bar is short and right-aligned, so the eye reads the
+            // words first and the progress second
+            val bx = Art.GW - 7 - 30
+            fb.frameRect(bx, y, 30, 5, 1)
+            val fill = Math.round(28f * o.progress / o.target).coerceIn(0, 28)
+            if (fill > 0) fb.rect(bx + 1, y + 1, fill, 3, 1)
+            y += 13
         }
+    }
+
+    private fun crashCard(sim: Sim) {
+        // What goes on this card decides whether there is another sortie.
+        // A number you cannot beat is a full stop; a bar two thirds full is
+        // a reason to tap. So the orders, the ground won and the near miss
+        // get the room, and the tally of what you shot does not.
+        //
+        // ONE knocked-out panel, not a plate per line: a pip or a burst
+        // left over from the last second of the sortie used to show through
+        // the gaps between plates and sit on top of the text.
+        val promoted = sim.promoted
+        val rows = ArrayList<Pair<String, Int>>()   // text to scale
+        rows.add((if (promoted) "PROMOTED" else "GAME OVER") to 2)
+        if (promoted) rows.add(Orders.rankName(sim.rank) to 2)
+
+        val newBest = sim.score >= sim.bestScore && sim.score > 0
+        rows.add(((if (newBest) "NEW BEST  " else "SCORE  ") + sim.score) to 1)
+
+        // "so close" is the single most effective line on the card. Only
+        // shown when it is TRUE - a fake near miss every time would be
+        // noticed in two runs and would poison every real one.
+        if (!newBest && sim.lastBest > 0f && sim.distance < sim.lastBest &&
+            sim.lastBest - sim.distance < sim.lastBest * Tune.SO_CLOSE) {
+            rows.add(((sim.lastBest - sim.distance).toInt().toString() +
+                " ROWS SHORT") to 1)
+        }
+        if (sim.sectors > 0) {
+            rows.add((if (sim.sectors == 1) "SECTOR TAKEN"
+                      else sim.sectors.toString() + " SECTORS TAKEN") to 1)
+        }
+        rows.add(("FRONT +" + sim.frontMoved.toInt() + " ROWS") to 1)
+
+        var h = 6
+        for ((_, sc) in rows) h += if (sc == 2) 14 else 10
+        val ordersH = 13 * sim.orders.size + 12
+        val top = 20
+        fb.rect(3, top, Art.GW - 6, h + ordersH + 4, 0)
+        fb.frameRect(3, top, Art.GW - 6, h + ordersH + 4, 1)
+
+        var y = top + 4
+        for ((t, sc) in rows) {
+            fb.text(t, (Art.GW - Fb.textW(t, sc, sc)) / 2, y, 1, sc, sc)
+            y += if (sc == 2) 14 else 10
+        }
+        ordersBlock(sim, y + 5)
+
         if (sim.canRestart() && ((sim.crashTicks / 20f).toInt() and 1) == 0) {
             val s = "TAP TO FLY AGAIN"
-            fb.plateText(s, (Art.GW - Fb.textW(s)) / 2, 152, 1, 1, 1, 2)
+            fb.plateText(s, (Art.GW - Fb.textW(s)) / 2, 164, 1, 1, 1, 2)
         }
     }
 }

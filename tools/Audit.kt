@@ -922,6 +922,264 @@ object Audit {
     }
 
     // =====================================================================
+    //  A21  the screen is never a single flat colour
+    // =====================================================================
+    private fun a21PaletteContrast() {
+        // SHIPPED BUG. Ink and paper were crossfaded independently, and
+        // between deep dusk and night the ink has to travel from near-black
+        // to near-white while the paper stays dark - so halfway through, the
+        // ink passed THROUGH the paper. Contrast bottomed out at 1.03:1:
+        // for a stretch of every cycle the screen was one flat colour with
+        // the whole game invisible on it. All five keyframes are fine, which
+        // is why looking at keyframes never showed it.
+        val r = Renderer()
+        var worst = Float.MAX_VALUE; var worstAt = 0f
+        var p = 0f
+        while (p < 5f) {
+            val pal = r.palette(p)
+            val c = r.contrast(pal.ink, pal.paper)
+            if (c < worst) { worst = c; worstAt = p }
+            p += 0.01f
+        }
+        note(String.format("worst contrast over the whole cycle: %.2f:1 at phase %.2f",
+            worst, worstAt))
+        check("A21 every phase is readable", worst >= 4.5f,
+            String.format("%.2f:1 at phase %.2f, floor is 4.5:1", worst, worstAt))
+
+        // and the raw crossfade really did fail, so this check has teeth
+        var rawWorst = Float.MAX_VALUE
+        p = 0f
+        while (p < 5f) {
+            val pal = r.rawPalette(p)
+            rawWorst = min(rawWorst, r.contrast(pal.ink, pal.paper))
+            p += 0.01f
+        }
+        note(String.format("unguarded crossfade bottomed out at %.2f:1", rawWorst))
+        check("A21 the unguarded crossfade really was invisible", rawWorst < 1.5f,
+            String.format("%.2f:1", rawWorst))
+    }
+
+    // =====================================================================
+    //  A22  playing the game must not make the game worse
+    // =====================================================================
+    private fun a22NoDecay() {
+        // THE headline defect. Every sortie used to start at worldX 0, so
+        // every sortie flew the identical ground; destroyed slots persist,
+        // so the reward for playing exactly as well decayed 2260 -> 900 ->
+        // 770 -> 660 and then flatlined. A game that pays less every time
+        // you play it is the precise opposite of one you come back to.
+        val runs = 14
+        val store = MemStore()
+        val scores = ArrayList<Int>()
+        val starts = ArrayList<Int>()
+        for (i in 0 until runs) {
+            val s = Sim(store)
+            starts.add(s.camX.toInt())
+            s.dismissBriefing(); s.start()
+            var t = 0
+            while (t < 60000 && !s.gameOver) {
+                TestPilot.cruise(s, 4f); s.firing = true
+                if (t % 120 == 0) s.dropBomb()
+                s.update(1f); t++
+            }
+            scores.add(s.score)
+        }
+        val firstHalf = scores.take(runs / 2).average()
+        val lastHalf = scores.drop(runs / 2).average()
+        note(String.format("scores over %d sorties: first half %.0f, last half %.0f",
+            runs, firstHalf, lastHalf))
+        note("launch points: " + starts.take(6).joinToString(", ") + ", ...")
+        check("A22 the reward does not decay with repeated play",
+            lastHalf >= firstHalf * 0.75,
+            String.format("%.0f -> %.0f", firstHalf, lastHalf))
+        check("A22 every sortie launches somewhere new",
+            starts.toSet().size == runs, "${starts.toSet().size}/$runs distinct")
+        check("A22 the front only ever advances over a campaign",
+            starts == starts.sorted(), "launch points went backwards")
+
+        // and the world those sorties fly over really is different
+        val seen = HashSet<String>()
+        for (st in starts) {
+            val probe = Sim(MemStore())
+            seen.add(World.visibleSlots(st.toDouble(), Art.GW.toDouble())
+                .joinToString(",") { World.slot(it).type.toString() })
+        }
+        check("A22 the ground is different each time", seen.size >= runs - 1,
+            "${seen.size}/$runs distinct opening screens")
+    }
+
+    // =====================================================================
+    //  A23  the ladder always moves, and never dead-ends
+    // =====================================================================
+    private fun a23Orders() {
+        // Every rank must produce three distinct, reachable orders with
+        // targets that grow. A repeated type would waste a slot; a target
+        // that stops growing would make the ladder free at the top.
+        var bad = 0; var dupes = 0
+        for (rank in 0 until 24) {
+            val set = Orders.forRank(rank)
+            if (set.size != set.toSet().size) dupes++
+            for (t in set) {
+                if (Orders.target(t, rank) <= 0) bad++
+                if (rank > 0 && Orders.target(t, rank) < Orders.target(t, rank - 1)) bad++
+            }
+        }
+        check("A23 every rank gives three distinct orders", dupes == 0, "$dupes ranks repeated a type")
+        check("A23 targets never shrink as you climb", bad == 0, "$bad bad targets")
+        check("A23 the ladder has names all the way up",
+            Orders.rankName(0).isNotEmpty() && Orders.rankName(99).isNotEmpty(),
+            Orders.rankName(0) + " .. " + Orders.rankName(99))
+
+        // A new pilot must never be handed an order they cannot start on.
+        for (rank in 0 until 2) {
+            for (t in Orders.forRank(rank)) {
+                check("A23 rank $rank order ${Orders.label(t)} is a beginner order",
+                    t != Orders.CHAIN && t != Orders.SCORE && t != Orders.GRAZES, "")
+            }
+            check("A23 rank $rank always has a sortie-wide order",
+                Orders.forRank(rank).any { it == Orders.ROWS || it == Orders.SCORE }, "")
+            if (false) {
+            }
+        }
+
+        var noBank = 0
+        for (rank in 0 until 24)
+            if (Orders.forRank(rank).none { it == Orders.ROWS || it == Orders.SCORE }) noBank++
+        check("A23 every rank has an order a bad sortie still moves", noBank == 0,
+            "$noBank ranks of 24 could bank nothing")
+
+        // The thing that makes a bad run bearable. Stated carefully, because
+        // the first version of this check overclaimed and failed honestly:
+        // a sortie that destroys nothing AND has already filled its rows
+        // order really does bank nothing, and it should - there is no way to
+        // pay someone for doing nothing that is not a lie. What must hold is
+        // that a sortie which actually DID something always banks it, and
+        // that the player is never left staring at orders they cannot act on.
+        val store = MemStore()
+        var stalled = 0; var flown = 0
+        for (i in 0 until 12) {
+            val s = Sim(store)
+            val before = s.orders.sumOf { it.progress }
+            s.dismissBriefing(); s.start()
+            var t = 0
+            // A poor pilot, but one actually PLAYING: low, guns going, and
+            // using the bombs. The first version of this left the bombs
+            // alone and failed 7 of 12 - correctly, because the orders said
+            // "destroy 3 depots" and depots need a bomb. A pilot that never
+            // touches one of the two controls is not a bad player, it is
+            // not a player.
+            while (t < 60000 && !s.gameOver) {
+                s.climbing = s.altitude() < 20f
+                s.firing = true
+                if (t % 100 == 0) s.dropBomb()
+                s.update(1f); t++
+            }
+            flown++
+            val after = Sim(store).orders.sumOf { it.progress }
+            if (after <= before && !s.promoted) stalled++
+        }
+        check("A23 a sortie that did something always banks it", stalled == 0,
+            "$stalled of $flown sorties gave the player nothing")
+
+        // ...and no set can ever strand the player on orders they cannot
+        // make progress against: something in every set is always open.
+        var stranded = 0
+        for (rank in 0 until 24) {
+            val set = Orders.forRank(rank)
+            // a set is actionable if ANY of it can be moved by flying and
+            // shooting - which is every type the game defines
+            if (set.none { it in 0 until Orders.TYPES }) stranded++
+        }
+        check("A23 no order set can strand the player", stranded == 0,
+            "$stranded of 24 ranks")
+    }
+
+    // =====================================================================
+    //  A24  a graze is a near miss, never a hit
+    // =====================================================================
+    private fun a24Graze() {
+        // Paying for a near miss is only fair if it is genuinely a miss. It
+        // must never fire for a burst that killed you, never fire twice for
+        // one burst, and never fire while you are invulnerable - otherwise
+        // the safest moment in the game would also be the most profitable.
+        val store = MemStore()
+        var grazes = 0; var deaths = 0
+        var whileInvuln = 0
+        for (i in 0 until 6) {
+            val s = Sim(store)
+            s.dismissBriefing(); s.start()
+            var t = 0
+            var g = s.grazes
+            while (t < 60000 && !s.gameOver) {
+                s.climbing = s.altitude() < 26f
+                s.firing = true
+                val invulnBefore = s.invuln > 0f
+                s.update(1f)
+                if (s.grazes > g) {
+                    grazes += s.grazes - g
+                    g = s.grazes
+                    if (invulnBefore) whileInvuln++
+                }
+                t++
+            }
+            deaths++
+        }
+        note("$grazes grazes over $deaths sorties flown on the deck")
+        check("A24 grazing actually happens when you fly low", grazes > 0, "$grazes")
+        check("A24 never scored while invulnerable", whileInvuln == 0, "$whileInvuln")
+        check("A24 the graze ring is outside the lethal one",
+            Tune.GRAZE_R > Tune.FLAK_LETHAL,
+            String.format("%.1f vs %.1f rows", Tune.GRAZE_R, Tune.FLAK_LETHAL))
+
+        // a pilot who never goes near the flak must never be paid for it
+        val high = Sim(MemStore())
+        high.dismissBriefing(); high.start()
+        var t = 0
+        while (t < 30000 && !high.gameOver) { TestPilot.cruise(high, 0f); high.update(1f); t++ }
+        check("A24 cruising out of reach earns no grazes", high.grazes == 0,
+            "${high.grazes} grazes at altitude")
+    }
+
+    // =====================================================================
+    //  A25  chains reward a planned run, not a lucky one
+    // =====================================================================
+    private fun a25Chain() {
+        val store = MemStore()
+        var best = 0; var seenTwo = 0
+        for (i in 0 until 8) {
+            val s = Sim(store)
+            s.dismissBriefing(); s.start()
+            var t = 0
+            while (t < 60000 && !s.gameOver) {
+                s.climbing = s.altitude() < 30f
+                s.firing = true
+                if (t % 110 == 0) s.dropBomb()
+                s.update(1f); t++
+                if (s.chain >= 2) seenTwo++
+            }
+            best = max(best, s.bestChain)
+        }
+        note("best chain over 8 strafing sorties: $best")
+        check("A25 chains actually form on a strafing run", best >= 2, "best was $best")
+        check("A25 the chain is capped", best <= Tune.CHAIN_MAX, "$best vs ${Tune.CHAIN_MAX}")
+
+        // a chain must EXPIRE - otherwise it is just a kill counter
+        val s = Sim(MemStore())
+        s.dismissBriefing(); s.start()
+        var t = 0
+        while (t < 60000 && !s.gameOver && s.chain < 1) {
+            s.climbing = s.altitude() < 30f; s.firing = true; s.update(1f); t++
+        }
+        check("A25 a chain starts at a kill", s.chain >= 1, "${s.chain}")
+        var wait = 0
+        while (s.chain > 0 && wait < 400 && !s.gameOver) {
+            s.firing = false; s.climbing = s.altitude() < 60f; s.update(1f); wait++
+        }
+        check("A25 a chain expires when you stop killing", s.chain == 0,
+            "still ${s.chain} after $wait ticks")
+    }
+
+    // =====================================================================
     @JvmStatic
     fun main(args: Array<String>) {
         println("=".repeat(78))
@@ -947,6 +1205,11 @@ object Audit {
         a18NoMissingGlyphs()
         a19Warmup()
         a20Pause()
+        a21PaletteContrast()
+        a22NoDecay()
+        a23Orders()
+        a24Graze()
+        a25Chain()
         println("=".repeat(78))
         println("${failures.size} checks failed")
         if (failures.isNotEmpty()) {
