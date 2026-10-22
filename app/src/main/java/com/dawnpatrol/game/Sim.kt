@@ -170,6 +170,26 @@ class Sim(private val store: Store) {
     // else the player has earned and the renderer can draw the right icon.
     var muted = false; private set
 
+    /**
+     * Swap the control halves. The game was unplayable as designed for a
+     * left-handed player who wants the climb - the control they hold for
+     * most of a sortie - under their dominant thumb.
+     */
+    var leftHanded = false; private set
+
+    /** Stills the dither and disables shake, for anyone the motion bothers. */
+    var reducedMotion = false; private set
+
+    fun toggleHanded() {
+        leftHanded = !leftHanded
+        store.putFloat("lefty", if (leftHanded) 1f else 0f); store.flush()
+    }
+
+    fun toggleMotion() {
+        reducedMotion = !reducedMotion
+        store.putFloat("calm", if (reducedMotion) 1f else 0f); store.flush()
+    }
+
     fun toggleMute() {
         muted = !muted
         store.putFloat("muted", if (muted) 1f else 0f)
@@ -222,6 +242,19 @@ class Sim(private val store: Store) {
     /** Endless mode: no objective, no landing, fly until you are shot down. */
     var endless = false
 
+    // ---- the aeroplane --------------------------------------------------
+    var plane: Plane = Planes.ALL[0]; private set
+
+    /** Cycle to the next airframe this rank has earned. */
+    fun nextPlane() {
+        if (started || crashed) return
+        val avail = Planes.unlockedAt(rank)
+        val i = avail.indexOf(plane)
+        plane = avail[(i + 1) % avail.size]
+        bombs = plane.bombs
+        store.putString("plane", plane.name); store.flush()
+    }
+
     // ---- damage ---------------------------------------------------------
     // One flag per part. `damaged.size` is also the length of the smoke
     // trail, so the readout and the state cannot drift apart.
@@ -235,10 +268,10 @@ class Sim(private val store: Store) {
 
     /** Climb authority, after whatever is broken. */
     fun climbAcc(): Float =
-        Tune.CLIMB_ACC * (if (isDamaged(PART_ENGINE)) Tune.DMG_CLIMB else 1f)
+        plane.climbAcc * (if (isDamaged(PART_ENGINE)) Tune.DMG_CLIMB else 1f)
 
     fun speedMax(): Float =
-        Tune.SPEED_MAX * (if (isDamaged(PART_ENGINE)) Tune.DMG_SPEED else 1f)
+        plane.speedMax * (if (isDamaged(PART_ENGINE)) Tune.DMG_SPEED else 1f)
 
     fun gunPeriod(): Float =
         Tune.GUN_PERIOD * (if (isDamaged(PART_GUNS)) Tune.DMG_GUN_MULT else 1f)
@@ -254,7 +287,7 @@ class Sim(private val store: Store) {
      */
     var shake = 0f; private set
     fun shakeOffset(): Int =
-        if (shake <= 0f) 0
+        if (shake <= 0f || reducedMotion) 0
         else ((kotlin.math.sin((ticks * 1.7f).toDouble()) * shake).toInt())
 
     // ---- orders and rank ----------------------------------------------------
@@ -322,6 +355,9 @@ class Sim(private val store: Store) {
             bestScore = store.getFloat("bestScore", 0f).toInt()
             sorties = store.getFloat("sorties", 0f).toInt()
             muted = store.getFloat("muted", 0f) > 0.5f
+        plane = Planes.byName(store.getString("plane", "SCOUT"))
+        leftHanded = store.getFloat("lefty", 0f) > 0.5f
+        reducedMotion = store.getFloat("calm", 0f) > 0.5f
             linePct = Tune.LINE_START
             frontX = 0.0
             rank = 0
@@ -338,6 +374,9 @@ class Sim(private val store: Store) {
         frontX = store.getFloat("front", 0f).toDouble()
         rank = store.getFloat("rank", 0f).toInt().coerceAtLeast(0)
         makeOrders()
+        // an airframe the current rank has not earned (a reset, a rollback)
+        // falls back to the scout rather than being quietly flyable
+        if (plane.unlockRank > rank) plane = Planes.ALL[0]
         // progress is stored as three plain numbers; a set that no longer
         // matches the rank (because the ladder was retuned) just starts over
         // rather than restoring nonsense
@@ -487,7 +526,7 @@ class Sim(private val store: Store) {
 
     fun rearm(): Boolean {
         if (mult < Tune.COST_REARM || bombs >= Tune.BOMB_MAX || crashed) return false
-        bombs = Tune.BOMB_MAX
+        bombs = plane.bombs
         mult = 1; lowTicks = 0f
         freePip()?.let {
             it.alive = true; it.x = planeWorldX().toFloat(); it.y = py - 10f
@@ -499,7 +538,7 @@ class Sim(private val store: Store) {
     /** What a tap on the spend button would do right now, for the HUD. */
     fun spendLabel(): String = when {
         damaged.isNotEmpty() && mult >= Tune.COST_REPAIR -> "FIX"
-        bombs < Tune.BOMB_MAX && mult >= Tune.COST_REARM -> "ARM"
+        bombs < plane.bombs && mult >= Tune.COST_REARM -> "ARM"
         else -> ""
     }
 
@@ -713,9 +752,9 @@ class Sim(private val store: Store) {
 
     fun planeSprite(): Array<String> {
         val base = when {
-            vy < -0.15f -> Art.SPR_PLANE_CLIMB
-            vy > 0.15f -> Art.SPR_PLANE_DIVE
-            else -> Art.SPR_PLANE
+            vy < -0.15f -> plane.climb
+            vy > 0.15f -> plane.dive
+            else -> plane.sprite
         }
         // The homebound aeroplane is the same shape pointing the other way,
         // and collision reads THIS function too - so the mirrored machine
@@ -850,12 +889,12 @@ class Sim(private val store: Store) {
         vy += if (stick) -climbAcc() * dt else Tune.GRAVITY * dt
         // a holed wing sinks whatever you do; you have to fly it off
         if (isDamaged(PART_WING)) vy += Tune.DMG_WING_VY * dt
-        vy = vy.coerceIn(-Tune.VY_MAX_UP, Tune.VY_MAX_DN)
+        vy = vy.coerceIn(-plane.vyUp, plane.vyDown)
         py += vy * dt
         if (py < Tune.CEIL_ROW) { py = Tune.CEIL_ROW; if (vy < 0f) vy = 0f }
 
-        val t = ((vy + Tune.VY_MAX_UP) / (Tune.VY_MAX_UP + Tune.VY_MAX_DN)).coerceIn(0f, 1f)
-        speed = Tune.SPEED_MIN + (speedMax() - Tune.SPEED_MIN) * t
+        val t = ((vy + plane.vyUp) / (plane.vyUp + plane.vyDown)).coerceIn(0f, 1f)
+        speed = plane.speedMin + (speedMax() - plane.speedMin) * t
         camX += speed * dir * dt
         distance += speed * dt
 

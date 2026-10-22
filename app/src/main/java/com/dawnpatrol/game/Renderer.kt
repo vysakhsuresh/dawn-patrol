@@ -853,12 +853,30 @@ class Renderer {
             val b = "BEST " + sim.bestScore
             fb.plateText(b, Art.GW - 6 - Fb.textW(b), 20, 1, 1, 1, 1)
         }
+        // the aeroplane you are about to fly, and the ones you have earned
+        val avail = Planes.unlockedAt(sim.rank)
+        fb.rect(3, Art.PICK_Y - 2, Art.GW - 6, Art.PICK_H, 0)
+        fb.frameRect(3, Art.PICK_Y - 2, Art.GW - 6, Art.PICK_H, 1)
+        val pn = sim.plane.name + (if (avail.size > 1) "  >" else "")
+        fb.text(pn, 6, Art.PICK_Y, 1)
+        fb.text(sim.plane.blurb, 6, Art.PICK_Y + 6, 1)
+
+        // options, one tap each, all three persisted
+        fb.rect(3, Art.OPT_Y - 2, Art.GW - 6, Art.OPT_H, 0)
+        fb.frameRect(3, Art.OPT_Y - 2, Art.GW - 6, Art.OPT_H, 1)
+        val o1 = if (sim.leftHanded) "LEFT HAND" else "RIGHT HAND"
+        fb.text(o1, 6, Art.OPT_Y, 1)
+        val o2 = if (sim.reducedMotion) "CALM" else "FULL"
+        fb.text(o2, Art.GW - 7 - Fb.textW(o2), Art.OPT_Y, 1)
+        fb.text("TAP TO CHANGE", 6, Art.OPT_Y + 6, 1)
+
+        val hands = if (sim.leftHanded) "HOLD RIGHT TO FLY" else "HOLD LEFT TO FLY"
         if (((sim.ticks / 22f).toInt() and 1) == 0) {
-            val s2 = "HOLD LEFT TO FLY"
+            val s2 = hands
             fb.plateText(s2, (Art.GW - Fb.textW(s2)) / 2, 150, 1, 1, 1, 2)
         }
         // a standing reminder of the other thumb, small and out of the way
-        val s3 = "RIGHT = BOMB + GUNS"
+        val s3 = if (sim.leftHanded) "LEFT = BOMB + GUNS" else "RIGHT = BOMB + GUNS"
         fb.plateText(s3, (Art.GW - Fb.textW(s3)) / 2, 160, 1, 1, 1, 1)
     }
 

@@ -1485,6 +1485,94 @@ object Audit {
     }
 
     // =====================================================================
+    //  A32  every airframe is a reward, not a trap
+    // =====================================================================
+    private fun a32Airframes() {
+        // The whole risk of giving the player a choice of aeroplane is
+        // that one of them quietly fails a guarantee the scout satisfies.
+        // A fast machine that cannot dodge, or a heavy one that cannot
+        // clear a balloon, is a trap sold as a promotion. Every proof the
+        // scout passes is re-run here for each airframe.
+        for (p in Planes.ALL) {
+            val tag = "A32 " + p.name
+
+            // --- art inside the hitbox, all three attitudes (A4) --------
+            var fits = true
+            val boxes = HashSet<Pair<Int, Int>>()
+            for (spr in listOf(p.sprite, p.climb, p.dive)) {
+                val rows = spr.indices.filter { spr[it].contains('X') }
+                val cols = spr.flatMap { r -> r.indices.filter { r[it] == 'X' } }
+                if (rows.min() < 0 || rows.max() >= Tune.PLANE_H ||
+                    cols.min() < 0 || cols.max() >= Tune.PLANE_W) fits = false
+                boxes.add(spr.maxOf { it.length } to spr.size)
+            }
+            check("$tag art stays inside the hitbox", fits, "")
+            check("$tag every attitude is the same box", boxes.size == 1,
+                boxes.toString())
+
+            // --- the control reversal is still responsive (A9) ----------
+            val reversal = (p.vyUp + p.vyDown) / p.climbAcc
+            note(String.format("%-9s reversal %.2fs  climb %.3f  speed %.2f-%.2f  bombs %d",
+                p.name, reversal / 60f, p.climbAcc, p.speedMin, p.speedMax, p.bombs))
+            check("$tag reverses in under half a second", reversal / 60f < 0.5f,
+                String.format("%.2fs", reversal / 60f))
+
+            // --- it can still out-climb a balloon from the deck (A8) ----
+            val runway = (Tune.BALLOON_WARN + Art.GW) / p.speedMin
+            var v = 0f; var rise = 0f; var t = 0f
+            while (t < runway) {
+                v = (v - p.climbAcc).coerceIn(-p.vyUp, p.vyDown)
+                rise -= v; t += 1f
+            }
+            val need = Art.HORIZON - Tune.BALLOON_TOP_MIN
+            check("$tag clears a balloon from the deck", rise > need,
+                String.format("%.0f vs %.0f rows", rise, need))
+
+            // --- and it can still out-climb a shell burst (A6) ----------
+            // worst case: the longest flight time the guns are allowed,
+            // from a standing start in the wrong direction
+            val flight = Tune.MAX_ENGAGE / Tune.SHELL_SPEED
+            var vv = p.vyDown; var dev = 0f; var tt = 0f
+            while (tt < flight) {
+                vv = (vv - p.climbAcc).coerceIn(-p.vyUp, p.vyDown)
+                dev -= vv; tt += 1f
+            }
+            val lethal = Tune.FLAK_LETHAL + Tune.PLANE_H / 2f
+            check("$tag can still dodge a shell", dev > lethal,
+                String.format("%.1f vs %.1f rows", dev, lethal))
+
+            // --- and still escape a scout (A14) -------------------------
+            val closing = Tune.ENEMY_SPEED + p.speedMax
+            val ticks = (Art.GW - Art.PLAYER_X - Tune.PLANE_W) / closing
+            var sv = 0f; var sy = 0f; var st = 0f
+            while (st < ticks) {
+                sv = (sv - p.climbAcc).coerceIn(-p.vyUp, p.vyDown)
+                sy -= sv; st += 1f
+            }
+            val reach = sy - Tune.ENEMY_VY * ticks
+            check("$tag can out-climb a scout", reach > Tune.PLANE_H,
+                String.format("%.1f vs %d rows", reach, Tune.PLANE_H))
+        }
+
+        // --- the ladder actually hands them out ------------------------
+        check("A32 the scout is available from the first sortie",
+            Planes.unlockedAt(0).size == 1 && Planes.unlockedAt(0)[0].name == "SCOUT", "")
+        check("A32 every airframe unlocks inside the rank ladder",
+            Planes.ALL.all { it.unlockRank < Orders.RANKS.size },
+            Planes.ALL.joinToString { it.name + "@" + it.unlockRank })
+        check("A32 all three are flyable by the top rank",
+            Planes.unlockedAt(Orders.RANKS.size - 1).size == Planes.ALL.size, "")
+
+        // --- and a locked one cannot be flown by a reset save ----------
+        val store = MemStore()
+        store.putString("plane", "BOMBER")
+        store.putFloat("save_version", SAVE_VERSION.toFloat())
+        store.putFloat("rank", 0f)
+        check("A32 a locked airframe falls back to the scout",
+            Sim(store).plane.name == "SCOUT", Sim(store).plane.name)
+    }
+
+    // =====================================================================
     @JvmStatic
     fun main(args: Array<String>) {
         println("=".repeat(78))
@@ -1521,6 +1609,7 @@ object Audit {
         a29Shake()
         a30Save()
         a31SectorNames()
+        a32Airframes()
         println("=".repeat(78))
         println("${failures.size} checks failed")
         if (failures.isNotEmpty()) {

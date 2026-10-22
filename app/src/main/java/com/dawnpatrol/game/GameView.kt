@@ -250,7 +250,18 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
                     sim.requestResume()
                     return true
                 }
-                val left = event.getX(i) < halfW
+                // the ready screen's own controls, live only while loitering
+                if (!sim.started) {
+                    if (Art.hitPlanePick(gy)) { sim.nextPlane(); buzz(14, 80); return true }
+                    if (Art.hitOptions(gy)) {
+                        if (gx < Art.GW / 2) sim.toggleHanded() else sim.toggleMotion()
+                        buzz(14, 80)
+                        return true
+                    }
+                }
+                // A left-handed player holds the climb - the control they
+                // hold for most of a sortie - under their dominant thumb.
+                val left = (event.getX(i) < halfW) != sim.leftHanded
                 if (!sim.started) {
                     // The sortie begins on a LEFT press and that same press
                     // IS the climb, so the hand-over to physics starts with

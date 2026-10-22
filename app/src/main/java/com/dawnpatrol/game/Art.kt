@@ -75,6 +75,58 @@ object Art {
         ".....XXX...XXX........"
     )
 
+    // ---- the other two airframes -----------------------------------------
+    // Drawn, fitted and compared against the scout in tools/PlaneLab.kt
+    // (out/kt/planes.png) long before they were ever flown. The triplane
+    // won that comparison on legibility: three clean horizontal lines
+    // survive all the way down to 1x and read on the ink earth at night.
+    val SPR_TRIPLANE = arrayOf(
+        "...XXXXXXXXXXXX.......",
+        "......X.....X.........",
+        "..XXXXXXXXXXXXXX......",
+        "XXX...X.....X.XXXXX...",
+        ".XXXXXXXXXXXXXXXXXXX.X",
+        "..XXXXXXXXXXXXXX....X.",
+        "......X.....X.........",
+        "......X.....X.........",
+        ".....XXX...XXX........"
+    )
+
+    val SPR_BOMBER = arrayOf(
+        "...XXXXXXXXXXXXX......",
+        "......X.......X.......",
+        "......X.......X.......",
+        "XXXX.......XXXXXXXX...",
+        ".XXXXXXXXXXXXXXXXXXX.X",
+        "..XX.XX.XXXXXXXXXXXX..",
+        "...XXXXXXXXXXXXX....X.",
+        "......X.......X.......",
+        ".....XXX....XXX......."
+    )
+
+    /**
+     * Pitch by shearing COLUMNS, never by rotating.
+     *
+     * Rotation on a 1-bit grid closes the 1px gaps that make a biplane
+     * read as a biplane. A column shear keeps every vertical relationship
+     * intact and tilts the whole machine - wings and undercarriage pitch
+     * with the fuselage, which is also the honest thing for them to do.
+     *
+     * Generated rather than hand-authored, so a new airframe needs one
+     * sprite instead of three and the attitudes cannot drift from it.
+     */
+    fun shear(spr: Array<String>, dir: Int): Array<String> {
+        val w = spr.maxOf { it.length }
+        val h = spr.size
+        val out = Array(h) { CharArray(w) { '.' } }
+        for (r in 0 until h) for (c in 0 until w) {
+            if (c >= spr[r].length || spr[r][c] != 'X') continue
+            val lift = if (c >= w * 2 / 3) 1 else if (c < w / 3) -1 else 0
+            out[(r - dir * lift).coerceIn(0, h - 1)][c] = 'X'
+        }
+        return Array(h) { String(out[it]) }
+    }
+
     val SPR_AA_GUN = arrayOf(
         "............XXX",
         "..........XXX..",
@@ -233,6 +285,19 @@ object Art {
     fun hitSpend(gx: Float, gy: Float) = inBtn(gx, gy, SPEND_X)
     fun hitPause(gx: Float, gy: Float) = inBtn(gx, gy, PAUSE_X)
     fun hitMute(gx: Float, gy: Float) = inBtn(gx, gy, MUTE_X)
+
+    // ---- ready-screen hit bands ------------------------------------------
+    // Only live while the aeroplane is loitering, so they can sit over the
+    // playfield without ever competing with the flight controls.
+    // Two rows of 3x5 text plus padding is 16, not 14 - at 14 the second
+    // line was clipped by the panel's own border.
+    const val PICK_Y = 100
+    const val PICK_H = 16
+    const val OPT_Y = 119
+    const val OPT_H = 16
+
+    fun hitPlanePick(gy: Float) = gy >= PICK_Y && gy < PICK_Y + PICK_H
+    fun hitOptions(gy: Float) = gy >= OPT_Y && gy < OPT_Y + OPT_H
 
     /** The HUD strip takes no flight input at all - only its buttons. */
     fun inHud(gy: Float): Boolean = gy >= 0f && gy < HUD_H
