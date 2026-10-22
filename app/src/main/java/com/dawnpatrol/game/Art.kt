@@ -291,12 +291,15 @@ object Art {
     // playfield without ever competing with the flight controls.
     // Two rows of 3x5 text plus padding is 16, not 14 - at 14 the second
     // line was clipped by the panel's own border.
-    const val PICK_Y = 100
+    const val PICK_Y = 104
     const val PICK_H = 16
-    const val OPT_Y = 119
+    const val OPT_Y = 122
     const val OPT_H = 16
+    const val DAILY_Y = 140
+    const val DAILY_H = 9
 
     fun hitPlanePick(gy: Float) = gy >= PICK_Y && gy < PICK_Y + PICK_H
+    fun hitDaily(gy: Float) = gy >= DAILY_Y && gy < DAILY_Y + DAILY_H
     fun hitOptions(gy: Float) = gy >= OPT_Y && gy < OPT_Y + OPT_H
 
     /** The HUD strip takes no flight input at all - only its buttons. */

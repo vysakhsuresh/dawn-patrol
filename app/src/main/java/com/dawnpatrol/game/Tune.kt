@@ -323,6 +323,20 @@ object Tune {
     const val EBULLET_SPEED = 1.35f   // slow enough to read and dodge
     const val PTS_ENEMY = 220
 
+    // ---- the rival ---------------------------------------------------------
+    // One named ace, remembered between sorties, with YOUR tally painted
+    // on his machine. A personal grudge is the cheapest strong emotion in
+    // game design: he is not harder than a scout by much, he is just the
+    // same one, again, and he has beaten you before.
+    const val RIVAL_HP = 3            // hits to bring him down
+    const val RIVAL_PERIOD = 2        // appears every N sorties, at least
+    const val RIVAL_SPEED = 0.40f
+    const val RIVAL_TRACK = 0.021f    // steers harder than a scout
+    const val RIVAL_VY = 0.46f
+    const val RIVAL_FIRE = 48f
+    const val PTS_RIVAL = 1800
+    const val RIVAL_WARN = 90f        // ticks of "HE IS HERE" before he closes
+
     // ---- difficulty ramp ---------------------------------------------------
     // Flat difficulty means the first minute and the tenth feel identical.
     const val RAMP_ROWS = 2600f       // rows over which threat goes 0 -> 1
@@ -341,6 +355,15 @@ object Tune {
     // How close to your own best counts as "so close". The end card says it
     // out loud, because "180 rows short" is what makes someone tap again.
     const val SO_CLOSE = 0.12f        // fraction of best
+
+    // ---- the sortie's own objective ----------------------------------------
+    const val PTS_OBJECTIVE = 900
+    const val LINE_OBJECTIVE = 0.14f
+
+    // ---- the ghost of your best run ------------------------------------------
+    // One byte of altitude every this many rows. 8 keeps a 3000-row sortie
+    // under 400 bytes, which fits comfortably in the same prefs file.
+    const val GHOST_STEP = 8f
 
     // The aircraft flies straight and level until the player's first touch.
     // Opening on a plane already falling out of the sky reads as a bug and

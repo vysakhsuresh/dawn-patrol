@@ -151,6 +151,7 @@ class Renderer {
         features(sim, night)
         smoke(sim)
         if (night) beams(sim)
+        ghostLine(sim)
         enemies(sim, night)
         projectiles(sim)
         bursts(sim)
@@ -173,6 +174,24 @@ class Renderer {
         }
         if (shakeY != 0) fb.shiftRows(Art.SKY_TOP, Art.GH, shakeY, if (night) 0 else 0)
         hud(sim, night)
+    }
+
+    /**
+     * The ghost of your best landed sortie: a dotted line of the altitude
+     * you held. Chasing a line beats chasing a number, and it is the only
+     * opponent in the game that is definitely your equal.
+     */
+    private fun ghostLine(sim: Sim) {
+        if (sim.ghost.isEmpty() || !sim.started || sim.crashed) return
+        for (sx in 0 until Art.GW step 2) {
+            // the row of the sortie this screen column corresponds to
+            val rows = sim.distance + (sx - sim.planeX()) * sim.dir
+            val gy = sim.ghostAt(rows)
+            if (gy < 0) continue
+            val y = gy + Tune.PLANE_H / 2
+            if (y < Art.SKY_TOP + 1 || y >= Art.HORIZON) continue
+            fb.set(sx, y, 1)
+        }
     }
 
     // ---- sky --------------------------------------------------------------
@@ -627,6 +646,13 @@ class Renderer {
             }
         }
 
+        // the sortie's own objective, one line, only while it is open
+        if (sim.started && !sim.crashed && sim.objective != Objective.SWEEP) {
+            val t = Objective.name(sim.objective) + " " +
+                sim.objProgress + "/" + sim.objTarget + (if (sim.objDone) " OK" else "")
+            fb.plateText(t, (Art.GW - Fb.textW(t)) / 2, Art.HUD_H + 1, 1, 1, 1, 1)
+        }
+
         // FUEL - only drawn once it matters, so the HUD stays quiet early
         if (sim.fuelFrac() < 0.45f) {
             val fw = 18
@@ -682,6 +708,17 @@ class Renderer {
             val g = "GRAZED"
             fb.plateText(g, (Art.GW - Fb.textW(g)) / 2, 24, 1, 1, 1, 1)
         }
+        // The ace, by name, with your tally on his machine.
+        if (sim.rivalFlash > 0f && !sim.crashed) {
+            val t1 = if (sim.rivalUp) sim.rival.name else "HE IS DOWN"
+            fb.plateText(t1, (Art.GW - Fb.textW(t1, 1, 2)) / 2, 36, 1, 1, 2, 3)
+            val t2 = if (sim.rivalUp)
+                (if (sim.rival.tally > 0) sim.rival.tally.toString() + " OF YOURS"
+                 else "HE IS HERE")
+            else "+" + Tune.PTS_RIVAL
+            fb.plateText(t2, (Art.GW - Fb.textW(t2)) / 2, 50, 1, 1, 1, 2)
+        }
+
         if (sim.turnFlash > 0f && !sim.crashed) {
             val t1 = "OBJECTIVE"
             fb.plateText(t1, (Art.GW - Fb.textW(t1, 1, 2)) / 2, 46, 1, 1, 2, 3)
@@ -714,6 +751,22 @@ class Renderer {
 
         if (!sim.started && !sim.crashed) {
             if (sim.showFullBriefing) briefing(sim) else startPrompt(sim)
+        }
+
+        // A2: TEACH BY FLYING. The briefing card is eleven lines of text;
+        // nobody reads eleven lines. On the first sortie ever - which has
+        // no flak until WARMUP_ROWS anyway - the controls are taught one
+        // at a time, in the moment they are needed, WITHOUT taking control
+        // away. A gated tutorial would undo the three-state start gate.
+        if (sim.sorties <= 1 && sim.started && !sim.crashed && sim.distance < 520f) {
+            val tip = when {
+                sim.altitude() < 30f -> "HOLD LEFT TO CLIMB"
+                sim.bombs == Tune.BOMB_MAX && sim.distance > 150f -> "TAP RIGHT TO BOMB"
+                sim.distance > 300f -> "HOLD RIGHT FOR GUNS"
+                else -> "LET GO TO GLIDE DOWN"
+            }
+            if (((sim.ticks / 26f).toInt() and 1) == 0)
+                fb.plateText(tip, (Art.GW - Fb.textW(tip)) / 2, 140, 1, 1, 1, 2)
         }
 
         // A life going missing from the HUD is not enough on its own - the
@@ -850,33 +903,54 @@ class Renderer {
      * on a LEFT press. Naming the side matters - the first control a player
      * touches should be the one that keeps them in the air.
      */
+    /**
+     * READY: everything the player needs before they take off, and not one
+     * thing more.
+     *
+     * This screen has to carry the sector, the weather, the sortie's
+     * objective, three standing orders, who is flying, the logbook, the
+     * choice of aeroplane, two settings and the daily toggle - on a canvas
+     * 100 cells wide. The first attempt simply stacked them and they
+     * collided: the pilot's name landed on top of the third order bar and
+     * the sector name ran into the best score. The layout below is laid
+     * out as one column of known heights, and A42 proves the bands do not
+     * overlap and every line fits the width.
+     */
     private fun startPrompt(sim: Sim) {
-        // The orders are the reason to take off, so they are the thing on
-        // screen while the player's thumb is hovering.
-        ordersBlock(sim, 32)
-        val sect = sim.sectorName()
-        fb.plateText(sect, 6, 20, 1, 1, 1, 1)
+        // --- 20: where, and what the weather is doing there -------------
+        fb.plateText(sim.sectorName(), 4, 20, 1, 1, 1, 1)
         if (sim.weather != Weather.CLEAR) {
             val w = Weather.name(sim.weather)
-            fb.plateText(w, Art.GW - 6 - Fb.textW(w), 26, 1, 1, 1, 1)
-        }
-        if (sim.bestScore > 0) {
-            val b = "BEST " + sim.bestScore
-            fb.plateText(b, Art.GW - 6 - Fb.textW(b), 20, 1, 1, 1, 1)
-        }
-        // the logbook in one line: what this pilot has actually done
-        val lb = sim.log
-        if (lb.totalSorties > 0) {
-            val t = lb.totalSorties.toString() + " SORTIES  " +
-                lb.totalLandings + " HOME  " + lb.totalSectors + " SECTORS"
-            fb.plateText(t, (Art.GW - Fb.textW(t)) / 2, 90, 1, 1, 1, 1)
-            if (lb.medals.isNotEmpty()) {
-                val m = lb.medals.size.toString() + "/" + Medals.COUNT + " MEDALS"
-                fb.plateText(m, (Art.GW - Fb.textW(m)) / 2, 82, 1, 1, 1, 1)
-            }
+            fb.plateText(w, Art.GW - 4 - Fb.textW(w), 27, 1, 1, 1, 1)
         }
 
-        // the aeroplane you are about to fly, and the ones you have earned
+        // --- 27: what the squadron wants from this one ------------------
+        if (sim.objective != Objective.SWEEP) {
+            val o = Objective.brief(sim.objective, sim.objTarget)
+            fb.plateText(o, 4, 27, 1, 1, 1, 1)
+        }
+
+        // --- 34..85: the standing orders --------------------------------
+        // 37, not 34: at 34 the panel's own top edge sat on the weather
+        // and objective line above it. A42 caught it; the sample frame I
+        // was looking at happened to have neither.
+        ordersBlock(sim, 37)
+
+        // --- 88: who is flying it ---------------------------------------
+        val pl = sim.squadron.current.name + "  " + sim.squadron.current.sorties
+        fb.plateText(pl, (Art.GW - Fb.textW(pl)) / 2, 88, 1, 1, 1, 1)
+
+        // --- 95: the logbook in one line --------------------------------
+        val lb = sim.log
+        // Two short labels at the ends rather than one long centred one:
+        // "BEST 999999   6/6 MEDALS" is 95px on a 94px line.
+        if (sim.bestScore > 0) {
+            fb.plateText("BEST " + sim.bestScore, 4, 95, 1, 1, 1, 1)
+        }
+        val md = lb.medals.size.toString() + "/" + Medals.COUNT + " MEDALS"
+        fb.plateText(md, Art.GW - 4 - Fb.textW(md), 95, 1, 1, 1, 1)
+
+        // --- 104: the aeroplane, and the ones this rank has earned ------
         val avail = Planes.unlockedAt(sim.rank)
         fb.rect(3, Art.PICK_Y - 2, Art.GW - 6, Art.PICK_H, 0)
         fb.frameRect(3, Art.PICK_Y - 2, Art.GW - 6, Art.PICK_H, 1)
@@ -884,23 +958,26 @@ class Renderer {
         fb.text(pn, 6, Art.PICK_Y, 1)
         fb.text(sim.plane.blurb, 6, Art.PICK_Y + 6, 1)
 
-        // options, one tap each, all three persisted
+        // --- 122: two settings, one tap each ----------------------------
         fb.rect(3, Art.OPT_Y - 2, Art.GW - 6, Art.OPT_H, 0)
         fb.frameRect(3, Art.OPT_Y - 2, Art.GW - 6, Art.OPT_H, 1)
-        val o1 = if (sim.leftHanded) "LEFT HAND" else "RIGHT HAND"
-        fb.text(o1, 6, Art.OPT_Y, 1)
+        fb.text(if (sim.leftHanded) "LEFT HAND" else "RIGHT HAND", 6, Art.OPT_Y, 1)
         val o2 = if (sim.reducedMotion) "CALM" else "FULL"
         fb.text(o2, Art.GW - 7 - Fb.textW(o2), Art.OPT_Y, 1)
         fb.text("TAP TO CHANGE", 6, Art.OPT_Y + 6, 1)
 
-        val hands = if (sim.leftHanded) "HOLD RIGHT TO FLY" else "HOLD LEFT TO FLY"
+        // --- 140: the dated sortie, one line ----------------------------
+        val dl = if (sim.isDaily) "DAILY  BEST " + sim.dailyBest()
+                 else "TAP HERE FOR DAILY"
+        fb.plateText(dl, (Art.GW - Fb.textW(dl)) / 2, Art.DAILY_Y, 1, 1, 1, 1)
+
+        // --- 152/161: the two thumbs ------------------------------------
         if (((sim.ticks / 22f).toInt() and 1) == 0) {
-            val s2 = hands
-            fb.plateText(s2, (Art.GW - Fb.textW(s2)) / 2, 150, 1, 1, 1, 2)
+            val s2 = if (sim.leftHanded) "HOLD RIGHT TO FLY" else "HOLD LEFT TO FLY"
+            fb.plateText(s2, (Art.GW - Fb.textW(s2)) / 2, 152, 1, 1, 1, 1)
         }
-        // a standing reminder of the other thumb, small and out of the way
         val s3 = if (sim.leftHanded) "LEFT = BOMB + GUNS" else "RIGHT = BOMB + GUNS"
-        fb.plateText(s3, (Art.GW - Fb.textW(s3)) / 2, 160, 1, 1, 1, 1)
+        fb.plateText(s3, (Art.GW - Fb.textW(s3)) / 2, 161, 1, 1, 1, 1)
     }
 
     /**
@@ -931,7 +1008,7 @@ class Renderer {
             // words first and the progress second
             val bx = Art.GW - 7 - 30
             fb.frameRect(bx, y, 30, 5, 1)
-            val fill = Math.round(28f * o.progress / o.target).coerceIn(0, 28)
+            val fill = Math.round(28f * o.shown() / o.target).coerceIn(0, 28)
             if (fill > 0) fb.rect(bx + 1, y + 1, fill, 3, 1)
             y += 13
         }

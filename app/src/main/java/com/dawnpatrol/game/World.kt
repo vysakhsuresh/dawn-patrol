@@ -34,6 +34,68 @@ object World {
     const val TANK = 6
     const val SANDBAG = 7
 
+    // ---- authored set pieces ---------------------------------------------
+    // SLOT_TABLE alone is texture, not encounters: sixteen entries
+    // shuffled give every sortie the same rhythm. These are hand-authored
+    // runs of ground that the generator SEQUENCES - twelve of them
+    // shuffled is hundreds of distinct sorties, where pure procedural
+    // goes samey and pure handmade runs out.
+    //
+    // Each chunk is a list of slot types laid down consecutively. They
+    // are deliberately short: a chunk is a bar of music, not a level.
+    private val CHUNKS: Array<IntArray> = arrayOf(
+        // flak gauntlet - three guns, nowhere to hide
+        intArrayOf(AA_GUN, SANDBAG, AA_GUN, SANDBAG, AA_GUN),
+        // balloon line - the only way is over
+        intArrayOf(BALLOON, TRENCH, BALLOON, TRENCH, BALLOON),
+        // supply dump - bombs pay here
+        intArrayOf(DEPOT, SANDBAG, DEPOT, TRENCH, DEPOT),
+        // searchlight alley - murder at night, harmless by day
+        intArrayOf(LIGHT, TRENCH, LIGHT, TRENCH, LIGHT),
+        // armour in the open
+        intArrayOf(TANK, TANK, SANDBAG, TANK),
+        // the quiet stretch, so the loud ones land
+        intArrayOf(TRENCH, WRECK, TRENCH, SANDBAG, TRENCH, WRECK),
+        // a gun dug in behind its own balloon
+        intArrayOf(BALLOON, AA_GUN, SANDBAG, AA_GUN, BALLOON),
+        // railhead: depots behind armour
+        intArrayOf(TANK, DEPOT, DEPOT, TANK),
+        // the battery - four guns and a light
+        intArrayOf(AA_GUN, AA_GUN, LIGHT, AA_GUN, AA_GUN),
+        // picket line
+        intArrayOf(SANDBAG, TRENCH, SANDBAG, TRENCH, SANDBAG, TRENCH),
+        // one fat target, well defended
+        intArrayOf(AA_GUN, DEPOT, AA_GUN),
+        // a wrecked sector somebody already fought over
+        intArrayOf(WRECK, WRECK, TRENCH, WRECK, SANDBAG)
+    )
+
+    /**
+     * The chunk covering absolute slot k, and how far into it we are.
+     *
+     * Seeded from the absolute slot index exactly the way everything else
+     * here is (lesson #1), so a chunk does not shift when you fly back
+     * over it - Audit A1/A37 hold across chunk boundaries.
+     */
+    private fun chunkFor(k: Int): Pair<IntArray, Int> {
+        // walk a deterministic chain of chunks from a coarse anchor, so
+        // the chunk a slot belongs to never depends on the camera
+        var start = floorDiv(k, 64) * 64
+        var idx = 0
+        var guard = 0
+        while (guard < 64) {
+            val c = CHUNKS[(hash32(start * 131 + 7) % CHUNKS.size.toUInt()).toInt()]
+            if (k < start + c.size) return c to (k - start)
+            start += c.size
+            idx++
+            guard++
+        }
+        return CHUNKS[0] to 0
+    }
+
+    private fun floorDiv(a: Int, b: Int): Int =
+        if (a >= 0) a / b else -(((-a) + b - 1) / b)
+
     private val SLOT_TABLE = intArrayOf(
         AA_GUN, TRENCH, SANDBAG, AA_GUN, DEPOT, TRENCH, WRECK, AA_GUN,
         SANDBAG, BALLOON, TRENCH, DEPOT, TANK, SANDBAG, LIGHT, TRENCH
@@ -104,7 +166,11 @@ object World {
     /** Feature in absolute slot k. */
     fun slot(k: Int): Slot {
         val h = hash32(k * 7919 + 13)
-        val typ = SLOT_TABLE[(h and 15u).toInt()]
+        // The authored chunk decides WHAT is here; the hash still decides
+        // exactly where in the cell it stands, so the texture that made
+        // the old generator feel hand-placed survives.
+        val (chunk, i) = chunkFor(k)
+        val typ = chunk[i.coerceIn(0, chunk.size - 1)]
         val off = ((h shr 6) and 0x3Fu).toInt() * Art.SLOT_W / 64
         return Slot(typ, k.toDouble() * Art.SLOT_W + off, h)
     }

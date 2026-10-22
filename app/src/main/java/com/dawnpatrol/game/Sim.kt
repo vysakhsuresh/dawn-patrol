@@ -82,6 +82,9 @@ class Enemy {
     var x = 0f; var y = 0f
     var vx = 0f; var vy = 0f
     var fireTimer = 0f
+    /** The named ace: tougher, steers harder, and remembered between runs. */
+    var rival = false
+    var hp = 1
 }
 
 /** A floating "+n" that rises off a kill - the feedback that makes a hit land. */
@@ -242,6 +245,32 @@ class Sim(private val store: Store) {
     /** Endless mode: no objective, no landing, fly until you are shot down. */
     var endless = false
 
+    // ---- the sortie's own orders ------------------------------------------
+    var objective = Objective.SWEEP; private set
+    var objTarget = 0; private set
+    var objProgress = 0; private set
+    var objDone = false; private set
+    private var photoRows = 0f
+
+    // ---- the squadron -------------------------------------------------------
+    val squadron = Squadron(store)
+    val rival = Rival(store)
+    var rivalUp = false; private set
+    var rivalFlash = 0f; private set
+    private var rivalDueThisSortie = false
+
+    // ---- the daily sortie ----------------------------------------------------
+    /** >0 means this is the dated sortie: same ground for everyone, no timer. */
+    var dailyDay = 0; private set
+    val isDaily: Boolean get() = dailyDay > 0
+
+    // ---- the ghost of your best run ------------------------------------------
+    // One byte per GHOST_STEP rows: the altitude you held. Chasing a line
+    // beats chasing a number, and it costs a few hundred bytes.
+    var ghost: ByteArray = ByteArray(0); private set
+    private val trace = ArrayList<Byte>()
+    private var traceNext = 0f
+
     // ---- the logbook ------------------------------------------------------
     val log = Logbook(store)
     /** Medals won by the sortie that just ended, for the card to shout. */
@@ -358,34 +387,46 @@ class Sim(private val store: Store) {
     private fun load() {
         // VERSIONED. Without this, any change to what is stored lets a
         // stale value read as a valid one - a rank from an older order
-        // ladder silently producing impossible targets, say. On a
-        // mismatch the campaign state is reset and the things the player
-        // EARNED (best, best score, sorties flown) are kept, because
-        // losing those to a schema change would be unforgivable.
+        // ladder silently producing impossible targets, say.
+        //
+        // Split into THREE groups on purpose, because an earlier version
+        // of this put four of them in the wrong one: settings and earned
+        // things survive a schema reset, the campaign does not. The
+        // misplaced lines sat inside the mismatch branch, so on a NORMAL
+        // load the chosen aeroplane, the handedness, reduced motion and
+        // the ghost were silently never restored - every one of them
+        // looked like it worked, because the defaults are the common case.
         val ver = store.getFloat("save_version", 0f).toInt()
-        if (ver != SAVE_VERSION) {
-            best = store.getFloat("best", 0f)
-            bestScore = store.getFloat("bestScore", 0f).toInt()
-            sorties = store.getFloat("sorties", 0f).toInt()
-            muted = store.getFloat("muted", 0f) > 0.5f
-        plane = Planes.byName(store.getString("plane", "SCOUT"))
+
+        // (1) things the player earned - kept whatever happens
+        best = store.getFloat("best", 0f)
+        bestScore = store.getFloat("bestScore", 0f).toInt()
+        sorties = store.getFloat("sorties", 0f).toInt()
+
+        // (2) settings and preferences - also kept whatever happens
+        muted = store.getFloat("muted", 0f) > 0.5f
         leftHanded = store.getFloat("lefty", 0f) > 0.5f
         reducedMotion = store.getFloat("calm", 0f) > 0.5f
+
+        if (ver != SAVE_VERSION) {
+            // (3) the campaign, which is the only thing a schema change
+            // can invalidate, so it is the only thing that is reset
             linePct = Tune.LINE_START
             frontX = 0.0
             rank = 0
+            plane = Planes.ALL[0]
+            ghost = ByteArray(0)
             makeOrders()
             save()
             reset()
             return
         }
+
         linePct = store.getFloat("line", Tune.LINE_START).coerceIn(0f, 1f)
-        best = store.getFloat("best", 0f)
-        bestScore = store.getFloat("bestScore", 0f).toInt()
-        sorties = store.getFloat("sorties", 0f).toInt()
-        muted = store.getFloat("muted", 0f) > 0.5f
         frontX = store.getFloat("front", 0f).toDouble()
         rank = store.getFloat("rank", 0f).toInt().coerceAtLeast(0)
+        plane = Planes.byName(store.getString("plane", "SCOUT"))
+        ghost = decodeGhost(store.getString("ghost", ""))
         makeOrders()
         // an airframe the current rank has not earned (a reset, a rollback)
         // falls back to the scout rather than being quietly flyable
@@ -412,6 +453,7 @@ class Sim(private val store: Store) {
         store.putFloat("front", frontX.toFloat())
         store.putFloat("rank", rank.toFloat())
         store.putString("orders", orders.joinToString(",") { it.progress.toString() })
+        store.putString("ghost", encodeGhost(ghost))
         // The world is endless, so the destroyed set cannot grow forever.
         // Keep the most recent slots - the ones the player may fly back over.
         val keep = destroyed.sortedDescending().take(512)
@@ -420,6 +462,46 @@ class Sim(private val store: Store) {
     }
 
     private var introBaseY = (Art.HORIZON - 52).toFloat()
+
+    /**
+     * Fly the dated sortie: the same ground for everyone on the same day.
+     *
+     * Deliberately NOT a streak and NOT a timer - nothing is lost by
+     * skipping a day, and there is nothing to lose by coming back after a
+     * month. It is a shared sortie, not an obligation.
+     */
+    fun setDaily(day: Int) {
+        dailyDay = day
+        reset()
+        if (day > 0) {
+            // the day picks the ground; the campaign front is untouched
+            camX = ((World.hash32(day * 2654435761.toInt()) % 4000u).toInt() *
+                Tune.SECTOR_ROWS / 100.0)
+            baseX = camX
+            objectiveX = camX + Tune.SORTIE_LEN
+        }
+    }
+
+    fun dailyBest(): Int = store.getFloat("dailyBest" + dailyDay, 0f).toInt()
+
+    private fun encodeGhost(g: ByteArray): String =
+        g.joinToString(",") { (it.toInt() and 0xFF).toString() }
+
+    private fun decodeGhost(s: String): ByteArray {
+        if (s.isEmpty()) return ByteArray(0)
+        val parts = s.split(',')
+        val out = ByteArray(parts.size)
+        for (i in parts.indices) out[i] = (parts[i].toIntOrNull() ?: 0).toByte()
+        return out
+    }
+
+    /** The recorded altitude at a given distance into the sortie, or -1. */
+    fun ghostAt(rows: Float): Int {
+        if (ghost.isEmpty()) return -1
+        val i = (rows / Tune.GHOST_STEP).toInt()
+        if (i < 0 || i >= ghost.size) return -1
+        return ghost[i].toInt() and 0xFF
+    }
 
     private fun makeOrders() {
         orders = Orders.forRank(rank).map { Order(it, Orders.target(it, rank)) }
@@ -586,6 +668,15 @@ class Sim(private val store: Store) {
         frontMoved = distance * linePct * (if (landed) 1f else 0.5f)
         frontX += frontMoved
         // orders that measure a whole sortie are settled here
+        squadron.flewOne()
+        // The ghost is the best LANDED sortie: a trace of a run that did
+        // not get home is a route to a crash.
+        if (landed && distance >= best) {
+            ghost = ByteArray(trace.size) { trace[it] }
+        }
+        if (isDaily && score > dailyBest()) {
+            store.putFloat("dailyBest" + dailyDay, score.toFloat())
+        }
         // the logbook, and whatever this sortie earned once and for all
         log.record(Sortie(score + lostScore, distance.toInt(), sectors,
             landed, crashCause))
@@ -598,6 +689,8 @@ class Sim(private val store: Store) {
         if (lastBombKill) won.add(Medals.LAST_BOMB)
         freshMedals = log.award(*won.toIntArray())
         log.save()
+        // The pilot did not come back. Nothing they earned goes with them.
+        if (!landed) squadron.standDown() else squadron.save()
 
         bumpOrder(Orders.ROWS, distance.toInt())
         // Credit what the sortie EARNED, not only what it banked. Points
@@ -616,6 +709,29 @@ class Sim(private val store: Store) {
             makeOrders()
         }
         save()
+    }
+
+    /** The squadron got what it asked for. */
+    private fun completeObjective() {
+        if (objDone) return
+        objDone = true
+        objProgress = objTarget
+        earn(Tune.PTS_OBJECTIVE * mult)
+        linePct += Tune.LINE_OBJECTIVE
+        lineDelta += Tune.LINE_OBJECTIVE
+        if (linePct >= 1f) captureSector()
+        linePct = linePct.coerceIn(0f, 1f)
+        sectorFlash = Tune.LIFE_FLASH
+        freePip()?.let {
+            it.alive = true; it.x = planeWorldX().toFloat(); it.y = py - 12f
+            it.age = 0f; it.text = "OBJECTIVE MET"
+        }
+    }
+
+    private fun objKill(kind: Int) {
+        if (objDone || objective != kind) return
+        objProgress++
+        if (objProgress >= objTarget) completeObjective()
     }
 
     private fun bumpOrder(type: Int, n: Int) {
@@ -643,6 +759,13 @@ class Sim(private val store: Store) {
         shake = 0f
         hitStop = 0f
         weather = Weather.forSector(sectorIndex())
+        objective = if (isDaily) Objective.forSector(dailyDay)
+                    else Objective.forSector(sectorIndex())
+        objTarget = Objective.target(objective, rank)
+        objProgress = 0; objDone = false; photoRows = 0f
+        trace.clear(); traceNext = 0f
+        rivalUp = false; rivalFlash = 0f
+        rivalDueThisSortie = sorties > 0 && (sorties % Tune.RIVAL_PERIOD == 0)
         damaged.clear()
         fuel = Tune.FUEL_FULL
         lagBuf = FloatArray(16); lagHead = 0
@@ -942,12 +1065,31 @@ class Sim(private val store: Store) {
         // the line creeps back while you are just sightseeing
         linePct = (linePct - Tune.LINE_CREEP * speed * dt).coerceIn(0f, 1f)
 
+        // the ghost trace: one sample every GHOST_STEP rows
+        traceNext -= speed * dt
+        if (traceNext <= 0f) {
+            traceNext = Tune.GHOST_STEP
+            if (trace.size < 2000) trace.add(py.toInt().coerceIn(0, 255).toByte())
+        }
+
+        // PHOTO RUN: low, level, and guns cold. Firing resets it, which is
+        // the whole point - a reconnaissance sortie is not a fight.
+        if (objective == Objective.PHOTO && !objDone) {
+            if (firing) photoRows = 0f
+            else if (altitude() < Tune.LOW_ALT && kotlin.math.abs(vy) < 0.3f) {
+                photoRows += speed * dt
+                objProgress = photoRows.toInt()
+                if (objProgress >= objTarget) completeObjective()
+            }
+        }
+
         if (chainTimer > 0f) {
             chainTimer -= dt
             if (chainTimer <= 0f) { chainTimer = 0f; chain = 0 }
         }
         if (chainFlash > 0f) chainFlash = max(0f, chainFlash - dt)
         if (sectorFlash > 0f) sectorFlash = max(0f, sectorFlash - dt)
+        if (rivalFlash > 0f) rivalFlash = max(0f, rivalFlash - dt)
         if (grazeFlash > 0f) grazeFlash = max(0f, grazeFlash - dt)
         if (shake > 0f) shake = max(0f, shake - dt * 0.22f)
         // These two shipped without decay for a while: the TURN FOR HOME
@@ -1079,12 +1221,20 @@ class Sim(private val store: Store) {
             if (!e.alive) continue
             if (s.x > e.x - 2f && s.x < e.x + Tune.PLANE_W &&
                 s.y > e.y - 2f && s.y < e.y + Tune.PLANE_H + 2f) {
+                // He takes several hits. The first two are the fight; the
+                // third is the thing you will remember.
+                if (e.rival && --e.hp > 0) {
+                    detonate(e.x + 8f, e.y + 4f, 5f, false)
+                    return true
+                }
                 e.alive = false
-                val earned = Tune.PTS_ENEMY * mult
+                if (e.rival) { rivalUp = false; rivalFlash = Tune.LIFE_FLASH; rival.downed() }
+                val earned = (if (e.rival) Tune.PTS_RIVAL else Tune.PTS_ENEMY) * mult
                 earn(earned)
                 bumpOrder(Orders.SCOUTS, 1)
+                objKill(Objective.CULL)
                 if (bombs == 0) lastBombKill = true
-        val bonus = registerKill()
+                val bonus = registerKill()
                 detonate(e.x + 8f, e.y + 4f, 8f, false)
                 freePip()?.let {
                     it.alive = true; it.x = e.x; it.y = e.y - 8f; it.age = 0f
@@ -1180,8 +1330,8 @@ class Sim(private val store: Store) {
         if (linePct >= 1f) captureSector()
         linePct = linePct.coerceIn(0f, 1f)
         when (type) {
-            World.DEPOT -> bumpOrder(Orders.DEPOTS, 1)
-            World.AA_GUN, World.LIGHT -> bumpOrder(Orders.GUNS, 1)
+            World.DEPOT -> { bumpOrder(Orders.DEPOTS, 1); objKill(Objective.STRIKE) }
+            World.AA_GUN, World.LIGHT -> { bumpOrder(Orders.GUNS, 1); objKill(Objective.SILENCE) }
             World.BALLOON -> bumpOrder(Orders.BALLOONS, 1)
             World.TANK -> bumpOrder(Orders.TANKS, 1)
         }
@@ -1384,8 +1534,9 @@ class Sim(private val store: Store) {
             if (!e.alive) continue
             // steer gently toward the player's altitude: there is no longer
             // an altitude that nothing can reach
-            val want = ((pyc - e.y) * Tune.ENEMY_TRACK)
-                .coerceIn(-Tune.ENEMY_VY, Tune.ENEMY_VY)
+            val trackK = if (e.rival) Tune.RIVAL_TRACK else Tune.ENEMY_TRACK
+            val vyCap = if (e.rival) Tune.RIVAL_VY else Tune.ENEMY_VY
+            val want = ((pyc - e.y) * trackK).coerceIn(-vyCap, vyCap)
             e.vy += (want - e.vy) * 0.08f * dt
             e.x += e.vx * dt
             e.y += e.vy * dt
@@ -1394,12 +1545,12 @@ class Sim(private val store: Store) {
             e.fireTimer -= dt
             val lead = (e.x - pxc) * dir
             if (e.fireTimer <= 0f && lead > 16f && lead < 74f) {
-                e.fireTimer = Tune.ENEMY_FIRE_PERIOD
+                e.fireTimer = if (e.rival) Tune.RIVAL_FIRE else Tune.ENEMY_FIRE_PERIOD
                 fireEnemyBullet(e, pxc, pyc)
             }
 
             val gone = if (dir > 0) e.x < camX - 24 else e.x > camX + Art.GW + 24
-            if (gone) { e.alive = false; continue }
+            if (gone) { if (e.rival) rivalUp = false; e.alive = false; continue }
             if (invuln <= 0f && !crashed && boxHitsPlane(e.x, e.y, Tune.PLANE_W.toFloat(),
                     Tune.PLANE_H.toFloat())) {
                 e.alive = false
@@ -1409,9 +1560,29 @@ class Sim(private val store: Store) {
         }
     }
 
+    private fun spawnRival() {
+        val e = enemies.firstOrNull { !it.alive } ?: return
+        rivalUp = true
+        rivalFlash = Tune.RIVAL_WARN
+        e.alive = true; e.rival = true; e.hp = Tune.RIVAL_HP
+        e.x = (camX + (if (dir > 0) Art.GW + 18 else -18)).toFloat()
+        e.y = (py - 8f).coerceIn(Tune.CEIL_ROW + 2f,
+            groundAt(e.x.toDouble()) - Tune.PLANE_H - 6f)
+        e.vx = -Tune.RIVAL_SPEED * dir
+        e.vy = 0f
+        e.fireTimer = Tune.RIVAL_FIRE
+    }
+
     private fun spawnEnemy() {
         if (kotlin.math.abs(planeWorldX() - baseX) < Tune.HOME_SAFE) return
+        // he comes on the way home, with your score in the balance
+        if (rivalDueThisSortie && !rivalUp && leg == LEG_HOME) {
+            rivalDueThisSortie = false
+            spawnRival()
+            return
+        }
         val e = enemies.firstOrNull { !it.alive } ?: return
+        e.rival = false; e.hp = 1
         e.alive = true
         e.x = (camX + (if (dir > 0) Art.GW + 14 else -14)).toFloat()
         // enter near the player's band so it is visible on approach
@@ -1544,6 +1715,7 @@ class Sim(private val store: Store) {
         // "my elevator is gone and I am forty rows up" is a situation. The
         // damage is kept through the respawn on purpose - you go on flying
         // the machine you wrecked.
+        if (rivalUp && (cause == "SCOUT" || cause == "COLLISION")) rival.scored()
         val whole = (0 until Tune.PARTS).filter { !damaged.contains(it) }
         if (whole.isNotEmpty()) {
             val pick = whole[(World.hash32(ticks.toInt() * 2654 + lives)

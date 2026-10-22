@@ -253,6 +253,16 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
                 }
                 // the ready screen's own controls, live only while loitering
                 if (!sim.started) {
+                    if (Art.hitDaily(gy)) {
+                        // the day number, local time. No timer, no streak:
+                        // skipping a day costs nothing and loses nothing.
+                        val day = ((System.currentTimeMillis() +
+                            java.util.TimeZone.getDefault().rawOffset) / 86_400_000L)
+                            .toInt()
+                        sim.setDaily(if (sim.isDaily) 0 else day)
+                        buzz(14, 80)
+                        return true
+                    }
                     if (Art.hitPlanePick(gy)) { sim.nextPlane(); buzz(14, 80); return true }
                     if (Art.hitOptions(gy)) {
                         if (gx < Art.GW / 2) sim.toggleHanded() else sim.toggleMotion()

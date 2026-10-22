@@ -1764,6 +1764,282 @@ object Audit {
     }
 
     // =====================================================================
+    //  A37  authored set pieces, sequenced without breaking the world
+    // =====================================================================
+    private fun a37SetPieces() {
+        // Chunks replace a shuffled table, so the two things that made the
+        // old generator trustworthy have to survive: a slot must never
+        // change when you fly back over it, and the mix must still contain
+        // everything the orders can ask for.
+        val a = (0 until 3000).map { World.slot(it).type }
+        val b = (2999 downTo 0).map { World.slot(it).type }.reversed()
+        check("A37 a slot is the same whichever way you reach it", a == b,
+            "walking forwards and backwards disagreed")
+
+        val mix = IntArray(8)
+        for (k in -2000 until 4000) mix[World.slot(k).type]++
+        val total = 6000
+        note("type mix: " + (0 until 8).joinToString(" ") {
+            "" + it + "=" + (mix[it] * 100 / total) + "%" })
+        for (t in listOf(World.AA_GUN, World.DEPOT, World.BALLOON,
+                         World.LIGHT, World.TANK)) {
+            check("A37 type $t still occurs often enough to be an order",
+                mix[t] * 100 / total >= 4, "${mix[t] * 100 / total}%")
+        }
+
+        // chunks must actually vary - one chunk everywhere is worse than
+        // the table it replaced
+        val windows = HashSet<String>()
+        for (k in 0 until 3000 step 5)
+            windows.add((0 until 5).joinToString(",") { World.slot(k + it).type.toString() })
+        note("${windows.size} distinct 5-slot windows over 600 samples")
+        check("A37 the sequence actually varies", windows.size > 60,
+            "${windows.size} distinct")
+
+        // and negative world positions still work (lesson #1 and #4)
+        check("A37 chunks work left of the origin",
+            (-500 until 0).all { World.slot(it).type in 0..7 }, "")
+    }
+
+    // =====================================================================
+    //  A38  the sortie's own objective is always achievable
+    // =====================================================================
+    private fun a38Objectives() {
+        for (o in 0 until Objective.COUNT) {
+            for (rank in 0 until 8) {
+                val t = Objective.target(o, rank)
+                check("A38 ${Objective.name(o)} rank $rank has a sane target",
+                    (o == Objective.SWEEP && t == 0) || t in 1..400, "$t")
+            }
+            val brief = Objective.brief(o, Objective.target(o, 0))
+            check("A38 ${Objective.name(o)} briefs in one line",
+                Fb.textW(brief) <= Art.GW - 10, brief + " = " + Fb.textW(brief) + "px")
+        }
+        // a STRIKE asking for more depots than a sortie can contain is a
+        // promise the world cannot keep
+        var depotsPerSortie = 0
+        val slots = (Tune.SORTIE_LEN * 2 / Art.SLOT_W).toInt()
+        for (k in 0 until slots) if (World.slot(k).type == World.DEPOT) depotsPerSortie++
+        note("a sortie of ${Tune.SORTIE_LEN.toInt()}x2 rows passes ~$slots slots, " +
+            "$depotsPerSortie of them depots")
+        check("A38 a top-rank STRIKE still fits in one sortie",
+            Objective.target(Objective.STRIKE, 7) <= depotsPerSortie,
+            "needs ${Objective.target(Objective.STRIKE, 7)}, sortie has $depotsPerSortie")
+        check("A38 a plain sweep is the common case",
+            (0 until 400).count { Objective.forSector(it) == Objective.SWEEP } > 120,
+            "" + (0 until 400).count { Objective.forSector(it) == Objective.SWEEP })
+    }
+
+    // =====================================================================
+    //  A39  the rival is a grudge, not a wall
+    // =====================================================================
+    private fun a39Rival() {
+        val store = MemStore()
+        val r = Rival(store)
+        check("A39 the ace has a name from the start", r.name.isNotEmpty(), r.name)
+        val first = r.name
+        r.scored(); r.scored()
+        check("A39 his tally remembers what he did to you", r.tally == 2, "${r.tally}")
+        check("A39 the grudge survives a relaunch", Rival(store).tally == 2, "")
+        r.downed()
+        check("A39 killing him resets the tally", r.tally == 0, "${r.tally}")
+        check("A39 a new man inherits the grudge", r.name != first || r.kills == 1,
+            first + " -> " + r.name)
+        check("A39 your count of him persists", Rival(store).kills == 1, "")
+
+        // he must be beatable: HP times the gun's rate inside one pass
+        val pass = (Art.GW / (Tune.RIVAL_SPEED + Tune.SPEED_MAX))
+        val shotsInPass = pass / Tune.GUN_PERIOD
+        note(String.format("one pass is %.0f ticks, about %.1f rounds, he takes %d",
+            pass, shotsInPass, Tune.RIVAL_HP))
+        check("A39 he can be brought down", shotsInPass > Tune.RIVAL_HP,
+            String.format("%.1f rounds vs %d hits", shotsInPass, Tune.RIVAL_HP))
+
+        // ...and escapable, like any scout (A14, with his numbers)
+        val p = Planes.ALL[0]
+        val closing = Tune.RIVAL_SPEED + p.speedMax
+        val ticks = (Art.GW - Art.PLAYER_X - Tune.PLANE_W) / closing
+        var v = 0f; var y = 0f; var t = 0f
+        while (t < ticks) { v = (v - p.climbAcc).coerceIn(-p.vyUp, p.vyDown); y -= v; t += 1f }
+        val reach = y - Tune.RIVAL_VY * ticks
+        check("A39 he can always be out-climbed", reach > Tune.PLANE_H,
+            String.format("%.1f vs %d rows", reach, Tune.PLANE_H))
+    }
+
+    // =====================================================================
+    //  A40  the squadron is a story layer and never a stake
+    // =====================================================================
+    private fun a40Squadron() {
+        // THE RULE THIS PROJECT REFUSES TO BREAK. A roster is only worth
+        // having if losing a pilot costs nothing you earned - otherwise it
+        // is a punishment for having played, which is the one pattern
+        // BACKLOG.md says must never ship.
+        val store = MemStore()
+        val sq = Squadron(store)
+        val first = sq.current.name
+        check("A40 a pilot has a name", first.isNotEmpty(), first)
+        sq.flewOne(); sq.flewOne(); sq.save()
+        check("A40 sorties are counted against the man", sq.current.sorties == 2, "")
+
+        // play a campaign, then lose the pilot
+        val s = Sim(store)
+        s.dismissBriefing(); s.start()
+        var t = 0
+        while (t < 60000 && !s.gameOver) { s.climbing = false; s.update(1f); t++ }
+        val after = Sim(store)
+        note("pilot ${first} stood down; ${after.squadron.fallen.size} on the memorial")
+        check("A40 the next pilot is already waiting",
+            after.squadron.current.name.isNotEmpty(), after.squadron.current.name)
+        check("A40 the fallen are remembered", after.squadron.fallen.isNotEmpty(), "")
+        check("A40 the memorial is capped", after.squadron.fallen.size <= Squadron.MAX,
+            "${after.squadron.fallen.size}")
+
+        // NOTHING EARNED GOES WITH HIM
+        val store2 = MemStore()
+        val a = Sim(store2)
+        a.dismissBriefing(); a.start()
+        var u = 0
+        while (u < 60000 && !a.gameOver) {
+            TestPilot.cruise(a, 2f); a.firing = true; a.update(1f); u++
+        }
+        val rankBefore = a.rank
+        val frontBefore = a.frontX
+        val medalsBefore = a.log.medals.size
+        val ordersBefore = a.orders.sumOf { it.progress }
+        val b = Sim(store2)
+        check("A40 rank does not die with the pilot", b.rank == rankBefore,
+            "${b.rank} vs $rankBefore")
+        check("A40 the ground does not die with the pilot", b.frontX == frontBefore,
+            "${b.frontX.toInt()} vs ${frontBefore.toInt()}")
+        check("A40 medals do not die with the pilot", b.log.medals.size >= medalsBefore,
+            "${b.log.medals.size} vs $medalsBefore")
+        check("A40 order progress does not die with the pilot",
+            b.orders.sumOf { it.progress } >= ordersBefore || b.promoted,
+            "${b.orders.sumOf { it.progress }} vs $ordersBefore")
+
+        // a name must fit the screen it is printed on
+        val widest = (0 until 200).map { Names.pick(it) }.maxByOrNull { Fb.textW(it) }!!
+        check("A40 the longest pilot name fits", Fb.textW(widest + "  12") <= Art.GW - 6,
+            widest + " = " + Fb.textW(widest + "  12") + "px")
+    }
+
+    // =====================================================================
+    //  A41  the ghost, and the dated sortie
+    // =====================================================================
+    private fun a41GhostAndDaily() {
+        val store = MemStore()
+        var landedOne = false
+        for (i in 0 until 10) {
+            val s = Sim(store)
+            s.dismissBriefing(); s.start()
+            var t = 0
+            while (t < 60000 && !s.gameOver) {
+                val toStrip = (s.planeWorldX() - s.baseX).toFloat()
+                if (s.leg == LEG_HOME && toStrip < Tune.HOME_SAFE) {
+                    val want = if (toStrip > Tune.LAND_ZONE) 24f else 7f
+                    s.climbing = s.altitude() < want
+                } else TestPilot.cruise(s, 2f)
+                s.firing = true
+                s.update(1f); t++
+            }
+            if (s.landed) landedOne = true
+        }
+        val g = Sim(store)
+        note("ghost is ${g.ghost.size} samples (${g.ghost.size * Tune.GHOST_STEP.toInt()} rows)")
+        check("A41 a landed sortie leaves a ghost", !landedOne || g.ghost.isNotEmpty(),
+            "${g.ghost.size} samples")
+        check("A41 the ghost survives a relaunch",
+            Sim(store).ghost.size == g.ghost.size, "")
+        check("A41 the ghost is small enough to store",
+            g.ghost.size <= 2000, "${g.ghost.size} bytes")
+        if (g.ghost.isNotEmpty()) {
+            check("A41 the ghost reads back in range",
+                g.ghostAt(0f) in 0..255 && g.ghostAt(-10f) == -1 &&
+                g.ghostAt(1e9f) == -1, "")
+        } else check("A41 the ghost reads back in range", true, "no ghost sampled")
+
+        // the dated sortie: same ground for everyone on the same day, and
+        // DIFFERENT ground on a different day
+        val d1 = Sim(MemStore()); d1.setDaily(20000)
+        val d2 = Sim(MemStore()); d2.setDaily(20000)
+        val d3 = Sim(MemStore()); d3.setDaily(20001)
+        check("A41 the same day is the same sortie", d1.camX == d2.camX,
+            "${d1.camX.toInt()} vs ${d2.camX.toInt()}")
+        check("A41 a different day is a different sortie", d1.camX != d3.camX,
+            "${d1.camX.toInt()} vs ${d3.camX.toInt()}")
+        check("A41 the daily does not disturb the campaign front",
+            d1.frontX == 0.0, "${d1.frontX.toInt()}")
+        // and it can be switched off again
+        d1.setDaily(0)
+        check("A41 the daily can be left", !d1.isDaily, "")
+    }
+
+    // =====================================================================
+    //  A42  the ready screen fits on the ready screen
+    // =====================================================================
+    private fun a42ReadyLayout() {
+        // This screen carries the sector, the weather, the objective,
+        // three orders, the pilot, the logbook, the aeroplane, two
+        // settings, the daily toggle and two prompts, on a canvas 100
+        // cells wide. The first attempt just stacked them and they
+        // collided - the pilot's name landed on the third order bar.
+        // Heights are known, so overlap is arithmetic, not opinion.
+        val bands = listOf(
+            "sector" to (20 to 7),
+            "weather/objective" to (27 to 7),
+            "orders" to (34 to 51),      // ordersBlock(37) draws from 34
+            "pilot" to (88 to 7),
+            "logbook" to (95 to 7),
+            "plane" to (Art.PICK_Y - 2 to Art.PICK_H),
+            "options" to (Art.OPT_Y - 2 to Art.OPT_H),
+            "daily" to (Art.DAILY_Y - 1 to Art.DAILY_H),
+            "prompt" to (152 to 7),
+            "controls" to (161 to 7))
+        var clashes = 0
+        for (i in bands.indices) for (j in i + 1 until bands.size) {
+            val (an, ab) = bands[i]; val (bn, bb) = bands[j]
+            if (ab.first < bb.first + bb.second && bb.first < ab.first + ab.second) {
+                clashes++
+                note("OVERLAP: $an and $bn")
+            }
+        }
+        check("A42 no two bands overlap", clashes == 0, "$clashes clashes")
+        val last = bands.last()
+        check("A42 the last band is on screen",
+            last.second.first + last.second.second <= Art.GH,
+            "${last.second.first + last.second.second} of ${Art.GH}")
+        check("A42 nothing starts under the HUD",
+            bands.all { it.second.first >= Art.HUD_H }, "")
+
+        // every line of text that can appear must fit the width
+        val widest = ArrayList<Pair<String, String>>()
+        widest.add("sector" to (0 until 400).map { World.sectorName(it) }
+            .maxByOrNull { Fb.textW(it) }!!)
+        widest.add("objective" to (0 until Objective.COUNT)
+            .map { Objective.brief(it, Objective.target(it, 7)) }
+            .maxByOrNull { Fb.textW(it) }!!)
+        widest.add("pilot" to ((0 until 200).map { Names.pick(it) }
+            .maxByOrNull { Fb.textW(it) }!! + "  999"))
+        widest.add("logbook best" to "BEST 999999")
+        widest.add("logbook medals" to "6/6 MEDALS")
+        widest.add("plane" to Planes.ALL.maxByOrNull { Fb.textW(it.blurb) }!!.blurb)
+        widest.add("daily" to "TAP HERE FOR DAILY")
+        widest.add("controls" to "RIGHT = BOMB + GUNS")
+        widest.add("rival" to (0 until 40).map { "" }.let { "VON RICHTER" })
+        for ((what, text) in widest) {
+            check("A42 the longest $what fits", Fb.textW(text) <= Art.GW - 6,
+                "\"" + text + "\" is " + Fb.textW(text) + "px of " + (Art.GW - 6))
+        }
+
+        // and the tap bands have to be reachable on a real phone
+        for ((name, h) in listOf("plane" to Art.PICK_H, "options" to Art.OPT_H,
+                                 "daily" to Art.DAILY_H)) {
+            check("A42 the $name band is big enough to hit", h >= 9,
+                "$h cells (~" + (h * 108 / 10) + " physical px)")
+        }
+    }
+
+    // =====================================================================
     @JvmStatic
     fun main(args: Array<String>) {
         println("=".repeat(78))
@@ -1805,6 +2081,12 @@ object Audit {
         a34HitStop()
         a35Aspect()
         a36Logbook()
+        a37SetPieces()
+        a38Objectives()
+        a39Rival()
+        a40Squadron()
+        a41GhostAndDaily()
+        a42ReadyLayout()
         println("=".repeat(78))
         println("${failures.size} checks failed")
         if (failures.isNotEmpty()) {

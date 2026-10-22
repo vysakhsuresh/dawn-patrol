@@ -1,18 +1,16 @@
 # Dawn Patrol — upgrade backlog
 
-> **STATUS (built):** R1 R2 R3 · T1 T2 T3 T4 · F1 F2 F3 F4 F5 ·
-> V2 V4 · S3 S4 · A1 A3 A4 A5 — 19 of 24, all audited.
+> **STATUS: ALL 24 ITEMS BUILT.** R1 R2 R3 · T1 T2 T3 T4 ·
+> F1 F2 F3 F4 F5 · V1 V2 V3 V4 V5 · S1 S2 S3 S4 S5 · A1 A2 A3 A4 A5.
+> Audit: 279 checks, 0 failures.
 >
-> **STATUS (not built):** V1 set pieces · V3 named rival · V5 sortie
-> objectives · S1 ghost of best run · S2 daily seeded sortie ·
-> A2 teach by flying · S5 permadeath (deliberately — see its warning).
+> S5 (the squadron) is built in the safe form its own warning demands: a
+> story layer, never a stake. Nothing earned dies with a pilot - rank,
+> the front, orders, medals and the logbook all belong to the squadron.
+> A40 proves it.
 >
-> A1 is partial: handedness and reduced motion are on the ready screen as
-> tap-to-change options rather than a separate settings panel.
-
-**This file is the thing to hand a CLI session.** Written against `f37cd14`.
-Give it one ID — "implement R1 from BACKLOG.md" — and it has everything it
-needs without re-deriving context.
+> A1 is a tap-to-change row on the ready screen rather than a separate
+> settings panel; everything it needed to carry is there.
 
 ---
 

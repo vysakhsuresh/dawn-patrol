@@ -192,6 +192,12 @@ is a statement about the game, not about a model of it.
     A34 hit-stop freezes without losing a tick        2-4 ticks, always ends
     A35 same game at every screen shape               7 phone/tablet/foldable shapes, uniform scale
     A36 the logbook keeps a campaign                  entries round-trip, medals awarded once
+    A37 authored set pieces keep the world stable     slots identical both ways, 309 distinct windows
+    A38 the sortie objective is always achievable     a top-rank strike fits in one sortie
+    A39 the rival is a grudge, not a wall             beatable in one pass, always out-climbable
+    A40 the squadron is a story layer, never a stake  rank, ground, medals and orders all survive a pilot
+    A41 the ghost and the dated sortie                same day is the same ground, campaign untouched
+    A42 the ready screen fits on the ready screen     10 bands, 0 overlaps, every line inside 94px
 
 ## Architecture
 

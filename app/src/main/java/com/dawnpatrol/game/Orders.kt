@@ -38,8 +38,14 @@ object Orders {
 
     /** Base target at rank 0, before the per-rank growth below. */
     //                            D  G  B  S  T  LOW  GZ  CH   ROWS   SCORE
-    private val BASE = intArrayOf(3, 6, 4, 4, 3, 600, 4,  3,  6500, 11000)
+    private val BASE = intArrayOf(3, 6, 4, 4, 3, 600, 4,  3, 14000, 24000)
 
+    // RESIZED AGAIN after the sortie gained a return leg: a good sortie
+    // now covers 4000+ rows, so a 6500 backstop filled in three sorties
+    // and the rank stalled on whatever kill order was left (A23 caught
+    // 8 of 12 sorties banking nothing). The backstop only does its job
+    // while it is still open.
+    //
     // ROWS and SCORE are the BACKSTOP slot - the one that guarantees a
     // sortie which went badly still moves a bar. At 2500 rows it filled in a
     // single sortie and then sat dead for the rest of the rank, which Audit
@@ -128,21 +134,38 @@ class Order(val type: Int, val target: Int) {
 
     val done: Boolean get() = progress >= target
 
-    /** Returns true if this call completed the order. */
+    /**
+     * PROGRESS IS A TALLY; `done` IS A THRESHOLD. It keeps counting past
+     * the target rather than stopping there.
+     *
+     * The clamped version looked harmless and broke the whole system:
+     * once the rows-or-score backstop filled, a sortie whose kills did not
+     * match the two remaining orders banked literally nothing, and the
+     * rank stalled - Audit A23 caught 2 of 12 sorties giving the player
+     * absolutely no forward motion. Raising the target only moves the
+     * stall further out. A tally that stops tallying is the bug.
+     *
+     * The display clamps instead, so a bar never overflows.
+     */
     fun bump(n: Int): Boolean {
-        if (done || n <= 0) return false
-        progress = minOf(target, progress + n)
-        return done
+        if (n <= 0) return false
+        val was = done
+        progress += n
+        return !was && done
     }
 
     /** For high-water-mark orders: keep the best ever seen. */
     fun reach(v: Int): Boolean {
-        if (done || v <= progress) return false
-        progress = minOf(target, v)
-        return done
+        if (v <= progress) return false
+        val was = done
+        progress = v
+        return !was && done
     }
 
-    fun restore(p: Int) { progress = p.coerceIn(0, target) }
+    fun restore(p: Int) { progress = p.coerceAtLeast(0) }
+
+    /** Progress as the bar should draw it: never past the end. */
+    fun shown(): Int = minOf(progress, target)
 
     /**
      * Thousands are abbreviated, because the line has to share its row with
@@ -153,5 +176,5 @@ class Order(val type: Int, val target: Int) {
     private fun short(v: Int): String =
         if (v >= 1000) (v / 1000).toString() + "K" else v.toString()
 
-    fun text(): String = Orders.label(type) + " " + short(progress) + "/" + short(target)
+    fun text(): String = Orders.label(type) + " " + short(shown()) + "/" + short(target)
 }

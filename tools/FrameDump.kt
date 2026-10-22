@@ -157,6 +157,36 @@ object FrameDump {
             if (!done) println("frameB/C SKIPPED - no pausable busy state in 12 sorties")
         }
 
+        // ---- D  the ready screen, with everything it now has to say ------
+        run {
+            val store = MemStore()
+            for (i in 0 until 6) {
+                val s = Sim(store)
+                s.dismissBriefing(); s.start()
+                var t = 0
+                while (t < 20000 && !s.gameOver) {
+                    val toStrip = (s.planeWorldX() - s.baseX).toFloat()
+                    if (s.leg == LEG_HOME && toStrip < Tune.HOME_SAFE) {
+                        val want = if (toStrip > Tune.LAND_ZONE) 24f else 7f
+                        s.climbing = s.altitude() < want
+                    } else TestPilot.cruise(s, 2f)
+                    s.firing = true
+                    if (t % 150 == 0) s.dropBomb()
+                    s.update(1f); t++
+                }
+            }
+            val ready = Sim(store)
+            ready.dismissBriefing()
+            var t = 0
+            while (t < 140) { ready.update(1f); t++ }
+            r.render(ready)
+            write(r, r.palette(ready.phase()), "$dir/fD_orders.ppm")
+            println("frameD rank=" + ready.rank + " pilot=" +
+                ready.squadron.current.name + " sector=" + ready.sectorName() +
+                " obj=" + Objective.name(ready.objective) +
+                " orders=" + ready.orders.joinToString(" ") { it.text() })
+        }
+
         // ---- G/H/I  the return leg, the turn, and the landing card -------
         // One shared pilot, the same approach profile Audit A26 proves can
         // get home, and a retry across sorties: a single sortie is not
