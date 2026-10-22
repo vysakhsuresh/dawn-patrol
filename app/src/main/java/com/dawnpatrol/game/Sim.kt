@@ -33,6 +33,19 @@ class MemStore : Store {
 }
 
 // ---- entities ---------------------------------------------------------
+// ---- the three states of a sortie ------------------------------------
+const val LEG_OUT = 0
+const val LEG_HOME = 1
+const val LEG_DOWN = 2
+
+// ---- the five things that can break ----------------------------------
+const val PART_ENGINE = 0
+const val PART_FUEL = 1
+const val PART_ELEVATOR = 2
+const val PART_WING = 3
+const val PART_GUNS = 4
+val PART_NAME = arrayOf("ENGINE", "FUEL", "ELEVATOR", "WING", "GUNS")
+
 const val K_BULLET = 0
 const val K_BOMB = 1
 const val K_SHELL = 2
@@ -186,6 +199,46 @@ class Sim(private val store: Store) {
     var frontMoved = 0f; private set
     /** Sectors taken this sortie - the thing worth bragging about. */
     var sectors = 0; private set
+
+    // ---- the sortie arc ------------------------------------------------
+    // TAKE OFF -> OBJECTIVE -> RETURN TO BASE, and the score is only yours
+    // if you land. `pending` is everything earned this sortie and it is at
+    // risk the whole way home; `score` is what has actually been banked.
+    var leg = LEG_OUT; private set
+    var landed = false; private set
+    var objectiveX = 0.0; private set
+    var baseX = 0.0; private set
+    var pending = 0; private set
+    var turnFlash = 0f; private set
+    /** Times the strip was missed and flown round again. */
+    var goArounds = 0; private set
+    var landFlash = 0f; private set
+    /** Endless mode: no objective, no landing, fly until you are shot down. */
+    var endless = false
+
+    // ---- damage ---------------------------------------------------------
+    // One flag per part. `damaged.size` is also the length of the smoke
+    // trail, so the readout and the state cannot drift apart.
+    val damaged = HashSet<Int>()
+    var fuel = Tune.FUEL_FULL; private set
+    private var lagBuf = FloatArray(16)
+    private var lagHead = 0
+
+    fun isDamaged(part: Int) = damaged.contains(part)
+    fun damageCount() = damaged.size
+
+    /** Climb authority, after whatever is broken. */
+    fun climbAcc(): Float =
+        Tune.CLIMB_ACC * (if (isDamaged(PART_ENGINE)) Tune.DMG_CLIMB else 1f)
+
+    fun speedMax(): Float =
+        Tune.SPEED_MAX * (if (isDamaged(PART_ENGINE)) Tune.DMG_SPEED else 1f)
+
+    fun gunPeriod(): Float =
+        Tune.GUN_PERIOD * (if (isDamaged(PART_GUNS)) Tune.DMG_GUN_MULT else 1f)
+
+    /** Ticks of fuel left, as a fraction. Only meaningful on the way home. */
+    fun fuelFrac(): Float = (fuel / Tune.FUEL_FULL).coerceIn(0f, 1f)
     var sectorFlash = 0f; private set
 
     // ---- orders and rank ----------------------------------------------------
@@ -211,6 +264,10 @@ class Sim(private val store: Store) {
     var best = 0f; private set
     /** The best BEFORE this run, so the card can say how close it came. */
     var lastBest = 0f; private set
+    /** Points that went down with the aeroplane. The sting on the card. */
+    var lostScore = 0; private set
+    /** Rows from base at the moment it ended - the "so near" number. */
+    var rowsFromBase = 0f; private set
 
     // ---- world state --------------------------------------------------------
     val destroyed = HashSet<Int>()
@@ -296,11 +353,127 @@ class Sim(private val store: Store) {
      * sector, the meter resets to face the next one, and the next sortie
      * launches over ground nobody has flown.
      */
+    /**
+     * The sortie arc: out to the objective, turn, home, land.
+     *
+     * The turn is automatic at the objective rather than a button, because
+     * the decision the game wants from the player is "how much more do I
+     * squeeze on the way back", not "may I turn round now".
+     */
+    private fun stepLeg() {
+        if (endless) return
+        when (leg) {
+            LEG_OUT -> if (goArounds > 0) {
+                // a go-around is a circuit, not a second sortie: turn back
+                // in as soon as there is room to line up again
+                if (noseWorldX() >= baseX + Tune.LAND_ZONE + 120f) { dir = -1; leg = LEG_HOME }
+            } else if (noseWorldX() >= objectiveX) {
+                leg = LEG_HOME
+                dir = -1
+                turnFlash = Tune.TURN_FLASH
+                // the turn itself is worth something: you got there
+                pending += Tune.PTS_SECTOR / 3 * mult
+            }
+            LEG_HOME -> {
+                // over the strip: any point along it will do
+                if (noseWorldX() <= baseX + Tune.LAND_ZONE) tryLand()
+                // ...and if it sails past the west end, go round again
+                if (!landed && noseWorldX() < baseX - Tune.GOAROUND_OVERSHOOT) {
+                    dir = 1
+                    leg = LEG_OUT
+                    goArounds++
+                    turnFlash = Tune.TURN_FLASH * 0.6f
+                }
+            }
+            else -> {}
+        }
+    }
+
+    /**
+     * Touchdown. You have to be low AND not falling out of the sky: an
+     * aeroplane arriving over the aerodrome at terminal sink has crashed,
+     * it has not landed, and letting that count would make the whole
+     * return leg free.
+     */
+    private fun tryLand() {
+        if (altitude() > Tune.LAND_ALT || vy > Tune.LAND_SPEED) {
+            // Too high is simply not landed yet - keep flying down the
+            // strip. Too LOW and still sinking hard is an arrival, not a
+            // landing, and the ground collision will say so.
+            return
+        }
+        leg = LEG_DOWN
+        landed = true
+        landFlash = Tune.LIFE_FLASH
+        pending += Tune.PTS_LANDED * mult
+        bankPending()
+        crashed = true          // the sortie is over, in the good way
+        gameOver = true
+        crashCause = "LANDED"
+        crashTicks = 0f
+        lastBest = best
+        if (distance > best) best = distance
+        if (score > bestScore) bestScore = score
+        endSortie()
+    }
+
+    /**
+     * Earn points. They are PENDING - at risk until the wheels are down.
+     * In endless mode there is no landing, so they bank as they are made.
+     */
+    private fun earn(n: Int) {
+        pending += n
+        if (endless) bankPending()
+    }
+
+    /** Score as the player sees it: banked plus whatever is still at risk. */
+    fun shownScore(): Int = score + pending
+
+    /** Move everything earned this sortie into the score that is kept. */
+    private fun bankPending() {
+        score += pending
+        pending = 0
+    }
+
+    /** Spend the greed meter on getting home instead of on more greed. */
+    fun repairOne(): Boolean {
+        if (mult < Tune.COST_REPAIR || damaged.isEmpty() || crashed) return false
+        val part = damaged.min()
+        damaged.remove(part)
+        mult = 1; lowTicks = 0f
+        freePip()?.let {
+            it.alive = true; it.x = planeWorldX().toFloat(); it.y = py - 10f
+            it.age = 0f; it.text = PART_NAME[part] + " FIXED"
+        }
+        return true
+    }
+
+    fun rearm(): Boolean {
+        if (mult < Tune.COST_REARM || bombs >= Tune.BOMB_MAX || crashed) return false
+        bombs = Tune.BOMB_MAX
+        mult = 1; lowTicks = 0f
+        freePip()?.let {
+            it.alive = true; it.x = planeWorldX().toFloat(); it.y = py - 10f
+            it.age = 0f; it.text = "REARMED"
+        }
+        return true
+    }
+
+    /** What a tap on the spend button would do right now, for the HUD. */
+    fun spendLabel(): String = when {
+        damaged.isNotEmpty() && mult >= Tune.COST_REPAIR -> "FIX"
+        bombs < Tune.BOMB_MAX && mult >= Tune.COST_REARM -> "ARM"
+        else -> ""
+    }
+
+    fun spend(): Boolean = repairOne() || rearm()
+
     private fun captureSector() {
         frontX += Tune.SECTOR_ROWS
         sectors++
         sectorFlash = Tune.LIFE_FLASH
         linePct = Tune.LINE_START
+        // taken ground cannot be lost on the way home, so this banks now
         score += Tune.PTS_SECTOR * mult
         save()
     }
@@ -317,11 +490,18 @@ class Sim(private val store: Store) {
         // Captures (filling the meter) have already banked a whole sector
         // the moment they happened, so a capture counts even if the sortie
         // ends badly ten seconds later.
-        frontMoved = distance * linePct
+        // Ground is only consolidated by a machine that came home. Shot
+        // down, you hold half of what you fought over - the rest is
+        // retaken while the squadron is short an aeroplane.
+        frontMoved = distance * linePct * (if (landed) 1f else 0.5f)
         frontX += frontMoved
         // orders that measure a whole sortie are settled here
         bumpOrder(Orders.ROWS, distance.toInt())
-        bumpOrder(Orders.SCORE, score)
+        // Credit what the sortie EARNED, not only what it banked. Points
+        // that went down with the aeroplane were still shot for, and A23
+        // caught 6 of 12 sorties banking nothing the moment score became
+        // conditional on landing.
+        bumpOrder(Orders.SCORE, score + lostScore)
         reachOrder(Orders.CHAIN, bestChain)
         if (orders.all { it.done } && !Orders.isTopRank(rank)) {
             rank++
@@ -347,6 +527,19 @@ class Sim(private val store: Store) {
         // Launch from the front line, not from worldX 0. This one line is
         // what makes a second sortie a different game from the first.
         camX = frontX
+        dir = 1
+        leg = LEG_OUT
+        landed = false
+        lostScore = 0
+        rowsFromBase = 0f
+        baseX = frontX
+        objectiveX = frontX + Tune.SORTIE_LEN
+        pending = 0
+        turnFlash = 0f; landFlash = 0f
+        goArounds = 0
+        damaged.clear()
+        fuel = Tune.FUEL_FULL
+        lagBuf = FloatArray(16); lagHead = 0
         py = (Art.HORIZON - 52).toFloat()
         introBaseY = py
         vy = 0f
@@ -406,10 +599,29 @@ class Sim(private val store: Store) {
     // =====================================================================
     //  world queries
     // =====================================================================
+    /**
+     * The features on screen, with the ground around your own aerodrome
+     * made friendly.
+     *
+     * The world generator seeds from absolute position and knows nothing
+     * about where your base is, so it will happily put a barrage balloon
+     * on your landing strip - and a balloon cable is lethal all the way to
+     * the ground, which makes the approach not hard but IMPOSSIBLE. Audit
+     * A26 could not land, and the cause looked like pilot error for three
+     * rounds. Inside HOME_SAFE the hostile furniture becomes sandbags:
+     * your own aerodrome has hangars, not enemy flak.
+     *
+     * World itself is untouched, so A1/A2 stability still holds - this is
+     * a view of the world, not a change to it.
+     */
     fun visibleSlots(): ArrayList<World.Slot> {
         slotBuf.clear(); trenchBuf.clear()
         for (k in World.visibleSlots(camX, Art.GW.toDouble())) {
-            val s = World.slot(k)
+            var s = World.slot(k)
+            if (!endless && kotlin.math.abs(s.worldX - baseX) < Tune.HOME_SAFE &&
+                s.type != World.TRENCH && s.type != World.WRECK) {
+                s = World.Slot(World.SANDBAG, s.worldX, s.hash)
+            }
             slotBuf.add(s)
             if (s.type == World.TRENCH) trenchBuf.add(s.worldX to s.hash)
         }
@@ -429,10 +641,22 @@ class Sim(private val store: Store) {
      * The attitude actually drawn. Collision reads the SAME sprite, so the
      * shape you can see is the shape that can hit things.
      */
-    fun planeSprite(): Array<String> = when {
-        vy < -0.15f -> Art.SPR_PLANE_CLIMB
-        vy > 0.15f -> Art.SPR_PLANE_DIVE
-        else -> Art.SPR_PLANE
+    private val mirrored = HashMap<Array<String>, Array<String>>()
+
+    /** Flip a sprite left-to-right, cached, so homebound art is free. */
+    private fun mirror(spr: Array<String>): Array<String> =
+        mirrored.getOrPut(spr) { Array(spr.size) { spr[it].reversed() } }
+
+    fun planeSprite(): Array<String> {
+        val base = when {
+            vy < -0.15f -> Art.SPR_PLANE_CLIMB
+            vy > 0.15f -> Art.SPR_PLANE_DIVE
+            else -> Art.SPR_PLANE
+        }
+        // The homebound aeroplane is the same shape pointing the other way,
+        // and collision reads THIS function too - so the mirrored machine
+        // cannot collide with the unmirrored one's wheels.
+        return if (dir > 0) base else mirror(base)
     }
 
     /**
@@ -456,12 +680,36 @@ class Sim(private val store: Store) {
         }
     }
 
+    // =====================================================================
+    //  where the aeroplane is
+    // =====================================================================
+    /**
+     * +1 outbound, -1 coming home. Everything that cares which way the
+     * aeroplane is pointing reads this, so the return leg is the same game
+     * played in mirror rather than a second code path to keep in step.
+     */
+    var dir = 1; private set
+
+    /** Signed forward velocity - the AA intercept solves against this. */
+    fun velX(): Float = speed * dir
+
+    /** The column the aeroplane is drawn in; it swaps ends on the way home. */
+    fun planeX(): Int =
+        if (dir > 0) Art.PLAYER_X else Art.GW - Art.PLAYER_X - Tune.PLANE_W
+
+    /** Its left edge in world coordinates. */
+    fun planeWorldX(): Double = camX + planeX()
+
+    /** Its nose, which is whichever end it is pointing. */
+    fun noseWorldX(): Double =
+        planeWorldX() + (if (dir > 0) Tune.PLANE_W.toDouble() else 0.0)
+
     /** Altitude above the ground directly below, in rows. */
-    fun altitude(): Float = groundAt(camX + Art.PLAYER_X) - (py + Tune.PLANE_H)
+    fun altitude(): Float = groundAt(planeWorldX()) - (py + Tune.PLANE_H)
 
     /** 0 at the ground, 1 at the ceiling - the greed axis. */
     fun altFrac(): Float {
-        val g = groundAt(camX + Art.PLAYER_X)
+        val g = groundAt(planeWorldX())
         val band = (g - Tune.PLANE_H - Tune.CEIL_ROW).coerceAtLeast(1f)
         return ((g - Tune.PLANE_H - py) / band).coerceIn(0f, 1f)
     }
@@ -516,15 +764,36 @@ class Sim(private val store: Store) {
         visibleSlots()
 
         // ---- flight ------------------------------------------------------
-        vy += if (climbing) -Tune.CLIMB_ACC * dt else Tune.GRAVITY * dt
+        // A broken elevator does not weaken the stick, it DELAYS it: the
+        // input goes into a ring buffer and comes out DMG_LAG ticks later,
+        // which is a far nastier and more readable failure than a smaller
+        // number would be.
+        val stick: Boolean
+        if (isDamaged(PART_ELEVATOR)) {
+            lagBuf[lagHead] = if (climbing) 1f else 0f
+            lagHead = (lagHead + 1) % lagBuf.size
+            val back = (lagHead + lagBuf.size -
+                Tune.DMG_LAG.toInt().coerceIn(1, lagBuf.size - 1)) % lagBuf.size
+            stick = lagBuf[back] > 0.5f
+        } else stick = climbing
+
+        vy += if (stick) -climbAcc() * dt else Tune.GRAVITY * dt
+        // a holed wing sinks whatever you do; you have to fly it off
+        if (isDamaged(PART_WING)) vy += Tune.DMG_WING_VY * dt
         vy = vy.coerceIn(-Tune.VY_MAX_UP, Tune.VY_MAX_DN)
         py += vy * dt
         if (py < Tune.CEIL_ROW) { py = Tune.CEIL_ROW; if (vy < 0f) vy = 0f }
 
         val t = ((vy + Tune.VY_MAX_UP) / (Tune.VY_MAX_UP + Tune.VY_MAX_DN)).coerceIn(0f, 1f)
-        speed = Tune.SPEED_MIN + (Tune.SPEED_MAX - Tune.SPEED_MIN) * t
-        camX += speed * dt
+        speed = Tune.SPEED_MIN + (speedMax() - Tune.SPEED_MIN) * t
+        camX += speed * dir * dt
         distance += speed * dt
+
+        // fuel burns on the clock, faster through a holed tank
+        fuel -= dt * (if (isDamaged(PART_FUEL)) Tune.FUEL_LEAK else 1f)
+        if (fuel <= 0f) { fuel = 0f; if (!crashed) hit("OUT OF FUEL") }
+
+        stepLeg()
 
         // the line creeps back while you are just sightseeing
         linePct = (linePct - Tune.LINE_CREEP * speed * dt).coerceIn(0f, 1f)
@@ -556,7 +825,7 @@ class Sim(private val store: Store) {
         }
         gunTimer -= dt
         if (firing && gunTimer <= 0f) {
-            gunTimer = Tune.GUN_PERIOD
+            gunTimer = gunPeriod()
             fireGun()
         }
 
@@ -574,9 +843,9 @@ class Sim(private val store: Store) {
     private fun fireGun() {
         val s = freeShot() ?: return
         s.alive = true; s.kind = K_BULLET
-        s.x = (camX + Art.PLAYER_X + Tune.PLANE_W).toFloat()
+        s.x = noseWorldX().toFloat()
         s.y = py + 4f
-        s.vx = Tune.GUN_SPEED + speed
+        s.vx = (Tune.GUN_SPEED + speed) * dir
         s.vy = 0.35f
         s.life = Tune.GUN_RANGE / Tune.GUN_SPEED
     }
@@ -586,9 +855,9 @@ class Sim(private val store: Store) {
         val s = freeShot() ?: return false
         bombs--
         s.alive = true; s.kind = K_BOMB
-        s.x = (camX + Art.PLAYER_X + 11).toFloat()
+        s.x = (planeWorldX() + 11).toFloat()
         s.y = py + Tune.PLANE_H
-        s.vx = speed
+        s.vx = velX()
         s.vy = max(0f, vy)
         s.life = 400f
         return true
@@ -653,7 +922,7 @@ class Sim(private val store: Store) {
                 s.y > e.y - 2f && s.y < e.y + Tune.PLANE_H + 2f) {
                 e.alive = false
                 val earned = Tune.PTS_ENEMY * mult
-                score += earned
+                earn(earned)
                 bumpOrder(Orders.SCOUTS, 1)
                 val bonus = registerKill()
                 detonate(e.x + 8f, e.y + 4f, 8f, false)
@@ -728,7 +997,7 @@ class Sim(private val store: Store) {
         if (chain < 2) return 0
         chainFlash = 44f
         val bonus = Tune.PTS_CHAIN * chain * mult
-        score += bonus
+        earn(bonus)
         return bonus
     }
 
@@ -744,7 +1013,7 @@ class Sim(private val store: Store) {
             else -> 0f
         } * mult
         val earned = pts * mult
-        score += earned
+        earn(earned)
         linePct += gain
         lineDelta += gain
         if (linePct >= 1f) captureSector()
@@ -796,7 +1065,7 @@ class Sim(private val store: Store) {
                     grazes++
                     grazeFlash = 36f
                     val earned = Tune.PTS_GRAZE * mult
-                    score += earned
+                    earn(earned)
                     bumpOrder(Orders.GRAZES, 1)
                     freePip()?.let {
                         it.alive = true; it.x = b.x; it.y = py - 6f; it.age = 0f
@@ -810,7 +1079,7 @@ class Sim(private val store: Store) {
 
     /** Distance from a point to the plane's box - 0 when it is inside. */
     private fun distToPlane(bx: Float, by: Float): Float {
-        val x0 = (camX + Art.PLAYER_X).toFloat()
+        val x0 = planeWorldX().toFloat()
         val dx = bx - bx.coerceIn(x0, x0 + Tune.PLANE_W)
         val dy = by - by.coerceIn(py, py + Tune.PLANE_H)
         return kotlin.math.sqrt(dx * dx + dy * dy)
@@ -818,7 +1087,7 @@ class Sim(private val store: Store) {
 
     private fun burstHitsPlane(b: Burst): Boolean {
         // plane box vs burst circle
-        val x0 = (camX + Art.PLAYER_X).toFloat()
+        val x0 = planeWorldX().toFloat()
         val x1 = x0 + Tune.PLANE_W
         val y0 = py
         val y1 = py + Tune.PLANE_H
@@ -840,7 +1109,7 @@ class Sim(private val store: Store) {
     // ---- anti-aircraft --------------------------------------------------------
     private fun stepAA(dt: Float) {
         if (distance < Tune.WARMUP_ROWS) return
-        val px = (camX + Art.PLAYER_X + Tune.PLANE_W / 2f).toFloat()
+        val px = (planeWorldX() + Tune.PLANE_W / 2f).toFloat()
         val pyC = py + Tune.PLANE_H / 2f
 
         for (sl in slotBuf) {
@@ -861,7 +1130,9 @@ class Sim(private val store: Store) {
             }
             timer -= dt
 
-            if (timer <= 0f && range >= Tune.MIN_ENGAGE && range <= Tune.MAX_ENGAGE) {
+            val overHome = kotlin.math.abs(sl.worldX - baseX) < Tune.HOME_SAFE
+            if (!overHome && timer <= 0f &&
+                range >= Tune.MIN_ENGAGE && range <= Tune.MAX_ENGAGE) {
                 if (fireShell(gx, gy, px, pyC, k)) {
                     val j = ((World.hash32(k * 977 + ticks.toInt()) and 0xFFFFu).toFloat() / 65535f)
                     val period = Tune.AA_PERIOD * (1f - 0.42f * threat())
@@ -883,7 +1154,7 @@ class Sim(private val store: Store) {
      * dodgeable" true for the whole battery, not just one gun.
      */
     private fun fireShell(gx: Float, gy: Float, px: Float, pyC: Float, k: Int): Boolean {
-        val vx = speed
+        val vx = velX()
         val vyy = vy
         val dx = px - gx; val dy = pyC - gy
         val s2 = Tune.SHELL_SPEED * Tune.SHELL_SPEED
@@ -944,7 +1215,7 @@ class Sim(private val store: Store) {
                 spawnEnemy()
             }
         }
-        val pxc = (camX + Art.PLAYER_X + Tune.PLANE_W / 2f).toFloat()
+        val pxc = (planeWorldX() + Tune.PLANE_W / 2f).toFloat()
         val pyc = py + Tune.PLANE_H / 2f
         for (e in enemies) {
             if (!e.alive) continue
@@ -958,13 +1229,14 @@ class Sim(private val store: Store) {
             e.y = e.y.coerceIn(Tune.CEIL_ROW, groundAt(e.x.toDouble()) - Tune.PLANE_H - 2f)
 
             e.fireTimer -= dt
-            val lead = e.x - pxc
+            val lead = (e.x - pxc) * dir
             if (e.fireTimer <= 0f && lead > 16f && lead < 74f) {
                 e.fireTimer = Tune.ENEMY_FIRE_PERIOD
                 fireEnemyBullet(e, pxc, pyc)
             }
 
-            if (e.x < camX - 24) { e.alive = false; continue }
+            val gone = if (dir > 0) e.x < camX - 24 else e.x > camX + Art.GW + 24
+            if (gone) { e.alive = false; continue }
             if (invuln <= 0f && !crashed && boxHitsPlane(e.x, e.y, Tune.PLANE_W.toFloat(),
                     Tune.PLANE_H.toFloat())) {
                 e.alive = false
@@ -975,15 +1247,16 @@ class Sim(private val store: Store) {
     }
 
     private fun spawnEnemy() {
+        if (kotlin.math.abs(planeWorldX() - baseX) < Tune.HOME_SAFE) return
         val e = enemies.firstOrNull { !it.alive } ?: return
         e.alive = true
-        e.x = (camX + Art.GW + 14).toFloat()
+        e.x = (camX + (if (dir > 0) Art.GW + 14 else -14)).toFloat()
         // enter near the player's band so it is visible on approach
         val h = World.hash32(ticks.toInt() * 7919 + 3)
         val off = (((h shr 5) and 0x3Fu).toInt() - 32) * 0.8f
         e.y = (py + off).coerceIn(Tune.CEIL_ROW + 2f,
             groundAt(e.x.toDouble()) - Tune.PLANE_H - 6f)
-        e.vx = -Tune.ENEMY_SPEED
+        e.vx = -Tune.ENEMY_SPEED * dir
         e.vy = 0f
         e.fireTimer = Tune.ENEMY_FIRE_PERIOD * 0.6f
     }
@@ -1001,7 +1274,7 @@ class Sim(private val store: Store) {
     }
 
     private fun boxHitsPlane(x: Float, y: Float, w: Float, h: Float): Boolean {
-        val ax0 = (camX + Art.PLAYER_X).toFloat(); val ax1 = ax0 + Tune.PLANE_W
+        val ax0 = planeWorldX().toFloat(); val ax1 = ax0 + Tune.PLANE_W
         val ay0 = py; val ay1 = py + Tune.PLANE_H
         return x < ax1 && x + w > ax0 && y < ay1 && y + h > ay0
     }
@@ -1010,7 +1283,7 @@ class Sim(private val store: Store) {
     private fun stepSearchlight(dt: Float) {
         if (!isNight()) { lockTicks = max(0f, lockTicks - dt); return }
         var lit = false
-        val px = (camX + Art.PLAYER_X + Tune.PLANE_W / 2f).toFloat()
+        val px = (planeWorldX() + Tune.PLANE_W / 2f).toFloat()
         val pyC = py + Tune.PLANE_H / 2f
         for (sl in slotBuf) {
             if (sl.type != World.LIGHT) continue
@@ -1051,7 +1324,7 @@ class Sim(private val store: Store) {
 
     // ---- terrain & obstacles ------------------------------------------------------
     private fun checkTerrain() {
-        val x0 = (camX + Art.PLAYER_X)
+        val x0 = planeWorldX()
         val x1 = x0 + Tune.PLANE_W
         val bottom = py + Tune.PLANE_H
 
@@ -1102,9 +1375,19 @@ class Sim(private val store: Store) {
      */
     private fun hit(cause: String) {
         if (crashed || invuln > 0f) return
-        detonate((camX + Art.PLAYER_X + 11).toFloat(), py + 4f, 11f, false)
+        detonate((planeWorldX() + 11).toFloat(), py + 4f, 11f, false)
         lives--
-        lastLoss = cause
+        // Break something, and say WHICH. "I lost a life" is a counter;
+        // "my elevator is gone and I am forty rows up" is a situation. The
+        // damage is kept through the respawn on purpose - you go on flying
+        // the machine you wrecked.
+        val whole = (0 until Tune.PARTS).filter { !damaged.contains(it) }
+        if (whole.isNotEmpty()) {
+            val pick = whole[(World.hash32(ticks.toInt() * 2654 + lives)
+                % whole.size.toUInt()).toInt()]
+            damaged.add(pick)
+            lastLoss = cause + " - " + PART_NAME[pick]
+        } else lastLoss = cause
         lifeFlash = Tune.LIFE_FLASH
         if (lives <= 0) {
             lives = 0
@@ -1112,6 +1395,12 @@ class Sim(private val store: Store) {
             gameOver = true
             crashCause = cause
             crashTicks = 0f
+            // F3: death must be legible. Not just WHAT killed you but HOW
+            // CLOSE you were - "400 rows from base" is the sentence that
+            // makes a thumb tap again.
+            lostScore = pending
+            pending = 0
+            rowsFromBase = kotlin.math.abs(planeWorldX() - baseX).toFloat()
             lastBest = best
             if (distance > best) best = distance
             if (score > bestScore) bestScore = score
@@ -1122,7 +1411,7 @@ class Sim(private val store: Store) {
     }
 
     private fun respawn() {
-        py = (groundAt(camX + Art.PLAYER_X) - Tune.RESPAWN_ALT)
+        py = (groundAt(planeWorldX()) - Tune.RESPAWN_ALT)
             .coerceAtLeast(Tune.CEIL_ROW + 6f)
         vy = 0f
         invuln = Tune.INVULN

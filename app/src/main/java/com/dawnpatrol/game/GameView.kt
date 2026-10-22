@@ -2,6 +2,10 @@ package com.dawnpatrol.game
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -51,6 +55,29 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         isFilterBitmap = false   // nearest neighbour: pixels stay pixels
         isAntiAlias = false
         isDither = false
+    }
+
+    // ---- haptics -----------------------------------------------------------
+    // Ported from Cat on a Fence, which had this and Dawn Patrol did not.
+    // On a phone it is the cheapest perceived-quality win available: the
+    // difference between a graze you see and a graze you FEEL.
+    private val vibrator: Vibrator? = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE)
+                as VibratorManager).defaultVibrator
+        else
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+    } catch (e: Throwable) { null }
+
+    /** Never let a missing motor cost the player their game. */
+    private fun buzz(ms: Long, amplitude: Int) {
+        if (sim.muted) return
+        val v = vibrator ?: return
+        try {
+            if (!v.hasVibrator()) return
+            v.vibrate(VibrationEffect.createOneShot(ms, amplitude))
+        } catch (e: Throwable) { }
     }
 
     // ---- input -----------------------------------------------------------
@@ -132,12 +159,23 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         val wasCrashed = sim.crashed
         val livesBefore = sim.lives
         val burstsBefore = countBursts()
+        val grazesBefore = sim.grazes
+        val sectorsBefore = sim.sectors
+        val legBefore = sim.leg
 
         sim.update(dt)
 
-        if (sim.lives < livesBefore) sound.playHit()
-        if (!wasCrashed && sim.crashed) sound.playHit()
+        if (sim.lives < livesBefore) { sound.playHit(); buzz(55, 255) }
+        if (!wasCrashed && sim.crashed) {
+            sound.playHit()
+            // landing and dying are both ends of a sortie and must never
+            // feel the same in the hand
+            if (sim.landed) buzz(40, 120) else buzz(140, 255)
+        }
         if (countBursts() > burstsBefore) sound.playThud()
+        if (sim.grazes > grazesBefore) buzz(12, 70)
+        if (sim.sectors > sectorsBefore) buzz(90, 200)
+        if (sim.leg != legBefore && sim.leg == LEG_HOME) buzz(30, 150)
 
         sound.muted = sim.muted
         sound.suspended = sim.frozen()
@@ -185,7 +223,9 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
                 val gx = if (dw > 0) (event.getX(i) - dst.left) / dw * Art.GW else -1f
                 val gy = if (dh > 0) (event.getY(i) - dst.top) / dh * Art.GH else -1f
                 if (Art.inHud(gy)) {
-                    if (Art.hitMute(gx, gy)) {
+                    if (Art.hitSpend(gx, gy)) {
+                        if (sim.spend()) { sound.playBomb(); buzz(18, 90) }
+                    } else if (Art.hitMute(gx, gy)) {
                         sim.toggleMute()
                         sound.muted = sim.muted
                         if (!sim.muted) sound.playThud()   // proof it is back

@@ -622,38 +622,42 @@ object Audit {
     //  A16  the day/night cycle must be content, not decoration
     // =====================================================================
     private fun a16CycleIsReachable() {
-        // The night palette inverts the whole scene - solid earth becomes
-        // pale, features are outlined, the plane reads as a hole in the
-        // light. It is the best-looking thing in the game, and for two
-        // revisions it was unreachable: at PHASE_LEN 2600 night began at
-        // 10400 rows, at 900 it began at 3600, and nobody flies that far.
-        // Dead content is invisible in playtesting - you simply never hear
-        // about the thing nobody saw. So it gets a number.
+        // RESTATED when the sortie gained a return leg. It used to ask
+        // whether one sortie flew far enough to reach night, because camX
+        // only ever increased. Now a sortie goes out 1500 rows and comes
+        // back, so camX oscillates inside a window and the time of day is
+        // set by WHERE THE FRONT IS rather than by how long you survived.
+        //
+        // That is the better game - every sortie now has a time of day, in
+        // a game called Dawn Patrol - but it means the old question is the
+        // wrong one. The property that matters is unchanged in spirit: the
+        // night palette must be something players actually see.
+        val store = MemStore()
+        val phases = HashSet<Int>()
         val reaches = ArrayList<Int>()
-        var sawNight = 0; var sawDusk = 0
-        val biases = listOf(0f, 3f, 6f, 9f, 12f, 16f, 20f, 26f)
-        for (b in biases) {
-            val s = TestPilot.sortie(b)
+        var sawNight = false
+        for (i in 0 until 14) {
+            val s = Sim(store)
+            phases.add(s.phase().toInt())
+            if (s.phase() >= 4f) sawNight = true
+            s.dismissBriefing(); s.start()
+            var t = 0
+            while (t < 60000 && !s.gameOver) {
+                TestPilot.cruise(s, 4f); s.firing = true
+                if (t % 120 == 0) s.dropBomb()
+                s.update(1f); t++
+                if (s.phase() >= 4f) sawNight = true
+                phases.add(s.phase().toInt())
+            }
             reaches.add(s.distance.toInt())
-            if (s.camX >= Tune.PHASE_LEN * 4) sawNight++
-            if (s.camX >= Tune.PHASE_LEN * 2) sawDusk++
         }
-        reaches.sort()
-        val best = reaches.last()
-        val median = reaches[reaches.size / 2]
-        note("competent pilot reaches " +
-            "${reaches.first()}..$best rows (median $median)")
-        note(String.format("night begins at %.0f rows, a full cycle is %.0f",
-            Tune.PHASE_LEN * 4, Tune.PHASE_LEN * 5))
-        check("A16 a competent sortie sees dusk", sawDusk == biases.size,
-            "$sawDusk/${biases.size} sorties")
-        check("A16 a competent sortie reaches night", sawNight * 2 >= biases.size,
-            "$sawNight/${biases.size} sorties")
-        check("A16 the whole cycle fits inside a good run",
-            Tune.PHASE_LEN * 5 <= best, "cycle ${(Tune.PHASE_LEN * 5).toInt()} rows " +
-            "vs best sortie $best")
-        // ...and not so short that the palette strobes: a phase must last
-        // at least a few seconds at full dive speed.
+        note("phases seen over 14 sorties: " + phases.sorted().toString())
+        note(String.format("a full cycle is %.0f rows of front; sorties cover %d rows",
+            Tune.PHASE_LEN * 5, reaches.average().toInt()))
+        check("A16 a short campaign sees the whole cycle", phases.size >= 5,
+            phases.size.toString() + " of 5 phases")
+        check("A16 night is something players actually see", sawNight, "")
+        // ...and not so short that the palette strobes inside one sortie
         val phaseSecs = Tune.PHASE_LEN / (Tune.SPEED_MAX * 60f)
         note(String.format("shortest a phase can pass: %.1fs at full dive", phaseSecs))
         check("A16 a phase is not a flicker", phaseSecs >= 5f,
@@ -1180,6 +1184,186 @@ object Audit {
     }
 
     // =====================================================================
+    //  A26  the sortie has an arc, and the arc can always be completed
+    // =====================================================================
+    private fun a26SortieArc() {
+        // The return leg is only a feature if it is reachable. A sortie you
+        // cannot get home from is not a stake, it is a tax.
+        val store = MemStore()
+        var landings = 0; var turns = 0
+        var worstFuelLeft = Float.MAX_VALUE
+        for (i in 0 until 10) {
+            val s = Sim(store)
+            s.dismissBriefing(); s.start()
+            var t = 0
+            while (t < 90000 && !s.gameOver) {
+                // A pilot good enough to survive the outbound leg - the
+                // first version flew a fixed altitude, never dodged, and
+                // got 0 of 10 to the objective, which measured the pilot
+                // rather than the arc. Near base it puts the nose down and
+                // lands.
+                val toStrip = (s.planeWorldX() - s.baseX).toFloat()
+                if (s.leg == LEG_HOME && toStrip < Tune.HOME_SAFE) {
+                    // Stay up until inside friendly airspace, THEN come
+                    // down. Descending early flew the whole approach
+                    // through balloon cables, which are lethal to the
+                    // ground - that is not an approach, it is a wall.
+                    val want = if (toStrip > Tune.LAND_ZONE) 24f else 5f
+                    s.climbing = s.altitude() < want
+                } else TestPilot.cruise(s, 2f)
+                // A careful pilot shoots back. The first version flew
+                // without firing and landed 0 of 10 - which measured
+                // pacifism, not the arc: the guns shooting at you are the
+                // ones you have to silence to get home.
+                s.firing = true
+                s.update(1f); t++
+            }
+            if (s.leg != LEG_OUT || s.goArounds > 0) turns++
+            if (s.landed) { landings++; worstFuelLeft = min(worstFuelLeft, s.fuel) }
+        }
+        note("$turns of 10 sorties reached the objective, $landings landed")
+        check("A26 the objective is reachable", turns == 10, "$turns/10")
+        check("A26 a careful pilot can get home and land", landings >= 8,
+            "$landings/10 landed")
+        check("A26 there is fuel to spare on a clean sortie",
+            landings == 0 || worstFuelLeft > 0f,
+            if (landings == 0) "no landing sampled"
+            else String.format("%.0f ticks left", worstFuelLeft))
+
+        // the whole round trip must fit inside the tank, with margin, even
+        // at the slowest speed the aeroplane can fly
+        val slowest = Tune.SPEED_MIN
+        val ticksNeeded = (Tune.SORTIE_LEN * 2f) / slowest
+        note(String.format("round trip at minimum speed: %.0f ticks, tank holds %.0f",
+            ticksNeeded, Tune.FUEL_FULL))
+        check("A26 the tank covers the round trip at full climb",
+            Tune.FUEL_FULL > ticksNeeded * 1.05f,
+            String.format("%.0f vs %.0f needed", Tune.FUEL_FULL, ticksNeeded))
+
+        // ...and still covers it through a holed tank from the turn onward
+        val leakTicks = (Tune.SORTIE_LEN / slowest) * (1f + Tune.FUEL_LEAK)
+        val outTicks = Tune.SORTIE_LEN / slowest
+        check("A26 a fuel leak at the turn is survivable, not fatal",
+            Tune.FUEL_FULL > outTicks + leakTicks * 0.75f,
+            String.format("%.0f vs %.0f", Tune.FUEL_FULL, outTicks + leakTicks * 0.75f))
+    }
+
+    // =====================================================================
+    //  A27  damage is survivable, nameable, and never a delayed death
+    // =====================================================================
+    private fun a27Damage() {
+        // Every COMBINATION of damage must still permit a landing. A damage
+        // state you cannot fly home is just a longer way of dying, and it
+        // would make the return leg feel like a punishment for being hit
+        // rather than a problem to solve.
+        var flyable = 0; var total = 0
+        var worstClimb = Float.MAX_VALUE
+        for (mask in 0 until (1 shl Tune.PARTS)) {
+            total++
+            // reconstruct the flight model for this damage set
+            val eng = (mask shr PART_ENGINE) and 1 == 1
+            val wing = (mask shr PART_WING) and 1 == 1
+            val climb = Tune.CLIMB_ACC * (if (eng) Tune.DMG_CLIMB else 1f)
+            val sink = if (wing) Tune.DMG_WING_VY else 0f
+            // can it still climb at all against gravity and a holed wing?
+            val net = climb - Tune.GRAVITY - sink
+            worstClimb = min(worstClimb, net)
+            if (net > 0f) flyable++
+        }
+        note(String.format("worst net climb over all %d damage states: %+.4f rows/tick^2",
+            total, worstClimb))
+        check("A27 every damage combination can still climb", flyable == total,
+            "$flyable/$total")
+
+        // a fully wrecked aeroplane must still clear a balloon from the deck
+        // Simulated, not a closed form: 0.5*a*t^2 ignores VY_MAX_UP and
+        // would have claimed a 275-row climb the aeroplane cannot do.
+        val acc = Tune.CLIMB_ACC * Tune.DMG_CLIMB
+        val sink = Tune.DMG_WING_VY
+        val runway = (Tune.BALLOON_WARN + Art.GW) / Tune.SPEED_MIN
+        var v = 0f; var rise = 0f; var tt = 0f
+        while (tt < runway) {
+            v = (v - acc + sink).coerceIn(-Tune.VY_MAX_UP, Tune.VY_MAX_DN)
+            rise -= v; tt += 1f
+        }
+        val need = Art.HORIZON - Tune.BALLOON_TOP_MIN
+        note(String.format("wrecked and on the deck: %.0f rows of climb in %.0f ticks, " +
+            "balloon needs %.0f", rise, runway, need))
+        check("A27 a wrecked aeroplane still clears a balloon", rise > need,
+            String.format("%.0f vs %.0f rows", rise, need))
+
+        // and every part must announce itself by name when it breaks
+        check("A27 every part has a name", PART_NAME.size == Tune.PARTS &&
+            PART_NAME.all { it.isNotEmpty() }, PART_NAME.joinToString(","))
+
+        // damage must actually happen, and must persist through a respawn -
+        // flying on in the machine you wrecked is the whole point
+        val s = Sim(MemStore())
+        s.dismissBriefing(); s.start()
+        var t = 0
+        while (t < 60000 && s.damageCount() == 0 && !s.gameOver) {
+            s.climbing = false; s.update(1f); t++
+        }
+        check("A27 a hit breaks a named part", s.damageCount() > 0,
+            "after $t ticks: " + s.lastLoss)
+        val keptThrough = s.damageCount()
+        var u = 0
+        while (u < 300 && !s.gameOver) { s.climbing = s.altitude() < 50f; s.update(1f); u++ }
+        check("A27 damage survives the respawn", s.damageCount() >= keptThrough,
+            "${s.damageCount()} vs $keptThrough")
+    }
+
+    // =====================================================================
+    //  A28  the multiplier can be spent, and spending cannot strand you
+    // =====================================================================
+    private fun a28Spend() {
+        val s = Sim(MemStore())
+        s.dismissBriefing(); s.start()
+        // nothing to buy, nothing to spend
+        check("A28 an undamaged, full aeroplane offers nothing to buy",
+            s.spendLabel().isEmpty() && !s.spend(), s.spendLabel())
+
+        // Fly sorties until a buyable state actually occurs. One sortie is
+        // not enough - the first attempt ended with the aeroplane broken
+        // but the meter at x2, which measured luck, not the mechanic.
+        val store = MemStore()
+        var sim: Sim? = null
+        for (i in 0 until 14) {
+            val a = Sim(store)
+            a.dismissBriefing(); a.start()
+            var t = 0
+            while (t < 60000 && !a.gameOver) {
+                a.climbing = a.altitude() < 22f
+                a.firing = true
+                a.update(1f); t++
+                if (a.damageCount() > 0 && a.mult >= Tune.COST_REPAIR) break
+            }
+            if (a.damageCount() > 0 && a.mult >= Tune.COST_REPAIR && !a.gameOver) {
+                sim = a; break
+            }
+        }
+        check("A28 a buyable state occurs in normal play", sim != null,
+            "no damaged-and-flush state in 14 sorties")
+        val s2 = sim ?: s
+        val before = s2.damageCount()
+        val offered = s2.spendLabel()
+        val ok = s2.spend()
+        note("offered '$offered', $before parts broken")
+        check("A28 a damaged aeroplane with a multiplier can buy a repair",
+            ok && s2.damageCount() == before - 1,
+            "$before -> ${s2.damageCount()}")
+        check("A28 spending resets the meter", s2.mult == 1, "x${s2.mult}")
+        check("A28 the button never lies - no label means no purchase",
+            s2.spendLabel().isNotEmpty() || !s2.spend(), "")
+
+        // cost must be reachable: MULT_MAX has to exceed what things cost,
+        // or the shop is decoration
+        check("A28 everything on offer is affordable before the meter caps",
+            Tune.COST_REPAIR <= Tune.MULT_MAX && Tune.COST_REARM <= Tune.MULT_MAX,
+            "repair ${Tune.COST_REPAIR}, rearm ${Tune.COST_REARM}, cap ${Tune.MULT_MAX}")
+    }
+
+    // =====================================================================
     @JvmStatic
     fun main(args: Array<String>) {
         println("=".repeat(78))
@@ -1210,6 +1394,9 @@ object Audit {
         a23Orders()
         a24Graze()
         a25Chain()
+        a26SortieArc()
+        a27Damage()
+        a28Spend()
         println("=".repeat(78))
         println("${failures.size} checks failed")
         if (failures.isNotEmpty()) {

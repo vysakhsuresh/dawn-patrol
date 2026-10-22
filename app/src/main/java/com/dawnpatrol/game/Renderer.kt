@@ -510,7 +510,7 @@ class Renderer {
         // Sim owns the choice, so the drawn shape and the collided shape
         // can never drift apart.
         val spr = sim.planeSprite()
-        val gx = Art.PLAYER_X
+        val gx = sim.planeX()
         val gy = Math.round(sim.py).toInt()
 
         if (night && sim.lockTicks > 0f) {
@@ -554,8 +554,13 @@ class Renderer {
         fb.text("ALT " + sim.altitude().toInt().coerceAtLeast(0), 3, 2, paper)
 
         // score, right-aligned - the number the player is actually chasing
-        val sc = sim.score.toString()
+        val sc = sim.shownScore().toString()
         fb.text(sc, Art.GW - 3 - Fb.textW(sc), 2, paper)
+        // On the way home, say out loud what is riding on getting back.
+        if (sim.leg == LEG_HOME && sim.pending > 0 && !sim.crashed) {
+            val r = "AT RISK " + sim.pending
+            fb.plateText(r, (Art.GW - Fb.textW(r)) / 2, 22, 1, 1, 1, 1)
+        }
 
         // lives, left - machines you have left, countable at a glance
         for (i in 0 until sim.lives) {
@@ -570,9 +575,53 @@ class Renderer {
 
         // pause + sound, in the dead space between the altimeter and the
         // score. Paper on the inked strip, so they read without a frame.
+        // the spanner only appears when it would actually do something,
+        // so it is never a button you press and nothing happens
+        val spend = sim.spendLabel()
+        if (spend.isNotEmpty() && !sim.crashed) {
+            if (((sim.ticks / 14f).toInt() and 1) == 0)
+                fb.rect(Art.SPEND_X - 1, Art.BTN_Y - 1, Art.BTN_W + 2, Art.BTN_H + 2, paper)
+            fb.sprite(Art.SPR_SPEND, Art.SPEND_X, Art.BTN_Y,
+                if (((sim.ticks / 14f).toInt() and 1) == 0) ink else paper)
+        }
         fb.sprite(Art.SPR_PAUSE, Art.PAUSE_X, Art.BTN_Y, paper)
         fb.sprite(if (sim.muted) Art.SPR_SOUND_OFF else Art.SPR_SOUND_ON,
             Art.MUTE_X, Art.BTN_Y, paper)
+
+        // THE LEG BAR - where you are in the sortie, and which way you are
+        // pointing. On the way home it fills from the other end, because
+        // that is the direction you are actually travelling.
+        if (!sim.endless) {
+            val lw = 34; val lx = 33
+            fb.frameRect(lx, 9, lw, 5, paper)
+            val span = (sim.objectiveX - sim.baseX).toFloat().coerceAtLeast(1f)
+            val outFrac = ((sim.planeWorldX() - sim.baseX).toFloat() / span)
+                .coerceIn(0f, 1f)
+            val tip = (outFrac * (lw - 3)).toInt()
+            fb.rect(lx + 1 + tip, 10, 2, 3, paper)
+            // a marker at each end: base on the left, objective on the right
+            fb.vline(lx, 7, 15, paper)
+            fb.vline(lx + lw - 1, 7, 15, paper)
+            if (sim.leg == LEG_HOME) {
+                // an arrow pointing back at base, so the direction is never
+                // something you have to infer from the scrolling
+                for (d in 0..2) fb.set(lx - 3 - d, 11 + 0, paper)
+                fb.set(lx - 4, 10, paper); fb.set(lx - 4, 12, paper)
+            }
+        }
+
+        // FUEL - only drawn once it matters, so the HUD stays quiet early
+        if (sim.fuelFrac() < 0.45f) {
+            val fw = 18
+            val fx = Art.GW - 3 - fw
+            fb.frameRect(fx, 9, fw, 5, paper)
+            val fill = ((fw - 2) * sim.fuelFrac()).toInt()
+            if (fill > 0) fb.rect(fx + 1, 10, fill, 3, paper)
+            if (sim.fuelFrac() < 0.18f && ((sim.ticks / 10f).toInt() and 1) == 0) {
+                val w = "FUEL"
+                fb.plateText(w, (Art.GW - Fb.textW(w)) / 2, 22, 1, 1, 1, 1)
+            }
+        }
 
         // front line meter: the long-term objective
         val mx = 4; val mw = Art.GW - 8; val my = 15; val mh = 3
@@ -586,6 +635,25 @@ class Renderer {
         fb.vline(mx + 1 + fill, my - 1, my + mh, paper)
         for (x in 0 until Art.GW step 2) fb.set(x, Art.HUD_H - 1, paper)
 
+        // SMOKE TRAIL - length IS the damage count, so the state and its
+        // readout cannot drift. One plume per broken part, streaming back
+        // from whichever end is the tail.
+        val dmg = sim.damageCount()
+        if (dmg > 0 && !sim.crashed) {
+            val tailX = if (sim.dir > 0) sim.planeX() else sim.planeX() + Tune.PLANE_W
+            val cy = Math.round(sim.py).toInt() + 4
+            for (i in 0 until dmg * 7) {
+                val d = (i + 1) * 2
+                val x = tailX - d * sim.dir
+                val wob = kotlin.math.sin((sim.ticks * 0.11f + i * 0.7f).toDouble())
+                val y = cy + (wob * (1 + i / 6.0)).toInt()
+                val density = 52 - i * 2
+                if (density <= 0) break
+                fb.dpx(x, y, density, 1)
+                if (i > 3) fb.dpx(x, y - 1, density / 2, 1)
+            }
+        }
+
         // CHAIN - the loudest thing on screen while it is running, because
         // it is the only reward with a clock on it.
         if (sim.chain >= 2 && sim.chainFlash > 0f && !sim.crashed) {
@@ -597,6 +665,13 @@ class Renderer {
             val g = "GRAZED"
             fb.plateText(g, (Art.GW - Fb.textW(g)) / 2, 24, 1, 1, 1, 1)
         }
+        if (sim.turnFlash > 0f && !sim.crashed) {
+            val t1 = "OBJECTIVE"
+            fb.plateText(t1, (Art.GW - Fb.textW(t1, 1, 2)) / 2, 46, 1, 1, 2, 3)
+            val t2 = "TURN FOR HOME"
+            fb.plateText(t2, (Art.GW - Fb.textW(t2)) / 2, 60, 1, 1, 1, 2)
+        }
+
         // Taking a sector is the biggest thing that can happen in a sortie
         // and it happens mid-flight, so it is announced mid-flight.
         // ...but not over the end card: a capture in the last seconds of a
@@ -610,12 +685,12 @@ class Renderer {
 
         // greed meter - only shows when it is actually earning
         if (sim.mult > 1) {
-            fb.plateText("X" + sim.mult, Art.PLAYER_X + 2, Math.round(sim.py).toInt() - 12,
+            fb.plateText("X" + sim.mult, sim.planeX() + 2, Math.round(sim.py).toInt() - 12,
                 1, 2, 2, 1)
         }
 
         if (night && sim.lockTicks > 0f) {
-            fb.plateText("LOCKED", Art.PLAYER_X + 30, Math.round(sim.py).toInt() - 14, 1)
+            fb.plateText("LOCKED", (sim.planeX() + 30).coerceAtMost(Art.GW - 26), Math.round(sim.py).toInt() - 14, 1)
         }
 
         balloonWarning(sim)
@@ -673,23 +748,37 @@ class Renderer {
      * a balloon depends on this lead. Remove it and low flying becomes a
      * coin flip.
      */
+    /**
+     * The balloon chevron, on the side the balloon is actually coming
+     * from.
+     *
+     * It used to be hard-coded to the right-hand edge, which was correct
+     * while the aeroplane only ever flew east. With a return leg that made
+     * it a warning about the ground BEHIND you: Audit A26 kept flying into
+     * cables on the way home with the chevron pointing the wrong way.
+     * Audit A8 now proves clearance in both directions.
+     */
     private fun balloonWarning(sim: Sim) {
+        val east = sim.dir > 0
         for (sl in sim.visibleSlots()) {
             if (sl.type != World.BALLOON) continue
             val k = World.cell(sl.worldX, Art.SLOT_W.toDouble())
             if (sim.isDead(k)) continue
             val x = (sl.worldX - sim.camX).toFloat()
-            if (x <= Art.GW - 2f || x > Art.GW + Tune.BALLOON_WARN) continue
+            val ahead = if (east) x > Art.GW - 2f && x <= Art.GW + Tune.BALLOON_WARN
+                        else x < 2f && x >= -Tune.BALLOON_WARN
+            if (!ahead) continue
             val top = sim.balloonTop(sl)
-            val ex = Art.GW - 5
             val ey = top.toInt()
-            // a blinking arrow at the edge, at the balloon's altitude
+            val ex = if (east) Art.GW - 5 else 4
+            val sgn = if (east) 1 else -1
             if (((sim.ticks / 9f).toInt() and 1) == 0) {
                 for (d in 0..3) {
-                    fb.set(ex + d, ey - d, 1); fb.set(ex + d, ey + d, 1)
-                    fb.set(ex + d + 1, ey - d, 1); fb.set(ex + d + 1, ey + d, 1)
+                    fb.set(ex + d * sgn, ey - d, 1); fb.set(ex + d * sgn, ey + d, 1)
+                    fb.set(ex + (d + 1) * sgn, ey - d, 1)
+                    fb.set(ex + (d + 1) * sgn, ey + d, 1)
                 }
-                fb.hline(ex - 3, ex + 1, ey, 1)
+                fb.hline(minOf(ex - 3 * sgn, ex + sgn), maxOf(ex - 3 * sgn, ex + sgn), ey, 1)
             }
         }
     }
@@ -808,11 +897,21 @@ class Renderer {
         // the gaps between plates and sit on top of the text.
         val promoted = sim.promoted
         val rows = ArrayList<Pair<String, Int>>()   // text to scale
-        rows.add((if (promoted) "PROMOTED" else "GAME OVER") to 2)
+        rows.add((if (promoted) "PROMOTED"
+                  else if (sim.landed) "LANDED"
+                  else "SHOT DOWN") to 2)
         if (promoted) rows.add(Orders.rankName(sim.rank) to 2)
 
         val newBest = sim.score >= sim.bestScore && sim.score > 0
         rows.add(((if (newBest) "NEW BEST  " else "SCORE  ") + sim.score) to 1)
+
+        // The sting, and the sentence that makes a thumb tap again. Both
+        // are only shown when true - a fake near miss every time would be
+        // noticed in two runs and would poison every real one.
+        if (!sim.landed && sim.lostScore > 0) {
+            rows.add(("LOST  " + sim.lostScore) to 1)
+            rows.add((sim.rowsFromBase.toInt().toString() + " ROWS FROM BASE") to 1)
+        }
 
         // "so close" is the single most effective line on the card. Only
         // shown when it is TRUE - a fake near miss every time would be

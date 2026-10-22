@@ -131,6 +131,73 @@ object Tune {
     const val LINE_CREEP = 0.0000435f // per row flown, back toward the enemy
     const val LINE_START = 0.42f
 
+    // ---- the sortie arc -----------------------------------------------------
+    // Before this the only way a sortie ended was running out of machines:
+    // no climax, no shape, and nothing you could lose by pressing on. Now a
+    // sortie is TAKE OFF -> OBJECTIVE -> RETURN TO BASE, and the score is
+    // only yours IF YOU LAND. Loss aversion beats accumulation: "did I make
+    // it back" is a story, "I reached 4200" is a number.
+    // MEASURED: a competent test pilot covers ~2100 rows before it is shot
+    // down, so the round trip has to fit inside that. At 1500 out (3000
+    // round trip) Audit A26 could not get a single sortie home.
+    // SWEPT, not guessed. Against a 400-row friendly bubble, lengths of
+    // 900/1000/1100/1200 all land 20/20 for a pilot that shoots back, and
+    // the front advance and the earnings both rise with length:
+    //     900 -> +956/sortie   1000 -> +1272   1100 -> +1356   1200 -> +1513
+    // 1200 it is. (At 620 of bubble and 1000 out, 62% of the leg had no
+    // targets at all and the front stopped advancing - Audit A22.)
+    const val SORTIE_LEN = 1200f      // rows out to the objective
+    const val LAND_SPEED = 0.52f      // rows/tick, max sink on touchdown
+    const val LAND_ALT = 7f           // rows above ground that counts as down
+    // Base is a STRIP, not a point. As a point, a pilot arriving high or
+    // fast sailed over it and flew west forever with no way back - Audit
+    // A26 landed 0 of 10. A strip you can line up on, and a go-around if
+    // you muff it, is both the real thing and the fair thing.
+    const val LAND_ZONE = 260f        // rows of strip, approached from the east
+    const val GOAROUND_OVERSHOOT = 40f // rows past the strip before you must
+                                       // climb out and come round again
+    const val PTS_LANDED = 800        // the bonus for bringing it home
+    // FRIENDLY AIRSPACE. The aerodrome is behind your own lines, so no
+    // enemy battery sits on your runway and no scout patrols your circuit.
+    // Without this the approach was a gauntlet flown at landing altitude
+    // into AIM_ERR_LOW accuracy, and Audit A26 landed 0 of 10 - the pilot
+    // kept being shot down on its own doorstep. The drama of the return
+    // leg belongs in the middle of it, not over the hangars.
+    // Sized from the descent, not picked: dropping from cruise (~90 rows
+    // up) at terminal sink takes ~145 ticks, about 120 rows, and the strip
+    // is 260 more. 400 covers both with margin and no more.
+    const val HOME_SAFE = 400f        // rows around base with no enemy fire
+    const val TURN_FLASH = 100f       // ticks the TURN FOR HOME banner holds
+
+    // ---- damage ---------------------------------------------------------
+    // A hit damages a PART, not an abstract life. Each part has one
+    // readable consequence, and the smoke trail is the readout so you can
+    // fly by the picture instead of the HUD.
+    const val PARTS = 5               // engine, fuel, elevator, wing, guns
+    const val DMG_SPEED = 0.70f       // engine: multiplier on SPEED_MAX
+    const val DMG_CLIMB = 0.72f       // engine: multiplier on CLIMB_ACC
+    const val DMG_LAG = 9f            // elevator: ticks of control lag
+    // A holed wing must SINK you, not GROUND you. At 0.085 it out-pulled
+    // the whole engine - climb authority is only 0.072 - so engine+wing
+    // together could not climb at all and 16 of the 32 damage states were
+    // unflyable. Audit A27 now proves every combination still climbs:
+    //     CLIMB_ACC * DMG_CLIMB - GRAVITY - DMG_WING_VY  >  0
+    //     0.072     * 0.72      - 0.030   - 0.010        =  +0.0118
+    const val DMG_WING_VY = 0.010f    // wing: constant sink you must hold off
+    const val DMG_GUN_MULT = 2.2f     // guns: multiplier on GUN_PERIOD
+    const val FUEL_FULL = 6000f       // ticks of fuel at full tanks
+    // A leak is a clock, not a death sentence: holed at the turn, the tank
+    // must still cover most of the way home so the drama is "will I make
+    // it" rather than "I was dead when it happened". A26 proves it.
+    const val FUEL_LEAK = 1.1f        // extra ticks burned per tick when holed
+
+    // ---- spending the multiplier -------------------------------------------
+    // The greed meter was a number that went up and down. Now it BUYS
+    // things, which turns a passive readout into a dilemma re-offered every
+    // few seconds: push for x9, or cash out and get home.
+    const val COST_REPAIR = 3         // multiplier needed to patch one part
+    const val COST_REARM = 2          // ...and to refill the bomb bay
+
     // ---- the advancing front ----------------------------------------------
     // MEASURED, not guessed. Before this, every sortie started at worldX 0,
     // so every sortie flew the IDENTICAL ground - same terrain, same

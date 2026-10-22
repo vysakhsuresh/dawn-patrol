@@ -198,11 +198,26 @@ object Art {
         "...X..."
     )
 
+    /** A spanner: spend the greed meter on getting home. */
+    val SPR_SPEND = arrayOf(
+        "XX...XX",
+        "XXX.XXX",
+        ".XXXXX.",
+        "..XXX..",
+        "..XXX..",
+        "..XXX..",
+        "..XXX.."
+    )
+
     const val BTN_W = 7
     const val BTN_H = 7
     const val BTN_Y = 1
-    const val PAUSE_X = 38
-    const val MUTE_X = 54
+    // Deliberately in the HUD strip at the top. Spending costs you a
+    // moment with your thumb off the stick, which is the right price for
+    // cashing in a multiplier you have been nursing.
+    const val SPEND_X = 32
+    const val PAUSE_X = 48
+    const val MUTE_X = 64
 
     // A 7px icon is 7 game pixels, which on a 1080-wide phone is about 76
     // physical pixels - fine to see, mean to hit. The touch rect is padded
@@ -215,6 +230,7 @@ object Art {
         gy >= 0f && gy < HUD_H &&
             gx >= x - BTN_PAD && gx < x + BTN_W + BTN_PAD
 
+    fun hitSpend(gx: Float, gy: Float) = inBtn(gx, gy, SPEND_X)
     fun hitPause(gx: Float, gy: Float) = inBtn(gx, gy, PAUSE_X)
     fun hitMute(gx: Float, gy: Float) = inBtn(gx, gy, MUTE_X)
 

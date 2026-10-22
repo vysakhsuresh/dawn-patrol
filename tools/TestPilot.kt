@@ -29,8 +29,12 @@ object TestPilot {
             .minByOrNull { it.fuse }
         if (shell != null && shell.fuse < 40f) want = alt > 60f
 
+        // AHEAD means ahead of the NOSE, which is not always east. The
+        // direction-blind version of this walked into head-on scouts for
+        // the whole return leg and made Audit A26 look like a game bug.
         val scout = s.enemies.firstOrNull {
-            it.alive && it.x - s.camX > Art.PLAYER_X && it.x - s.camX < Art.GW + 30
+            val rel = (it.x - s.planeWorldX()).toFloat() * s.dir
+            it.alive && rel > 0f && rel < Art.GW + 30
         }
         if (scout != null && kotlin.math.abs(scout.y - s.py) < 16f)
             want = scout.y > s.py + 4f
