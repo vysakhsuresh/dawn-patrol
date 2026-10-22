@@ -164,6 +164,13 @@ class Renderer {
         // nothing moves relative to anything else and the hitbox - which
         // lives in world coordinates - is untouched. A shaking HUD would
         // just be unreadable.
+        // Fog: a dither veil over the playfield only. It blinds the
+        // gunners too (Weather.aimScale), so it is a trade, not a tax.
+        if (sim.weather == Weather.FOG && !sim.reducedMotion) {
+            for (y in Art.SKY_TOP until Art.GH)
+                for (x in 0 until Art.GW)
+                    if (fb.get(x, y) == 0) fb.npx(x, y, Tune.FOG_VEIL, 1)
+        }
         if (shakeY != 0) fb.shiftRows(Art.SKY_TOP, Art.GH, shakeY, if (night) 0 else 0)
         hud(sim, night)
     }
@@ -849,6 +856,10 @@ class Renderer {
         ordersBlock(sim, 32)
         val sect = sim.sectorName()
         fb.plateText(sect, 6, 20, 1, 1, 1, 1)
+        if (sim.weather != Weather.CLEAR) {
+            val w = Weather.name(sim.weather)
+            fb.plateText(w, Art.GW - 6 - Fb.textW(w), 26, 1, 1, 1, 1)
+        }
         if (sim.bestScore > 0) {
             val b = "BEST " + sim.bestScore
             fb.plateText(b, Art.GW - 6 - Fb.textW(b), 20, 1, 1, 1, 1)

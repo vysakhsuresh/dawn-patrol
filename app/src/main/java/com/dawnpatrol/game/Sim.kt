@@ -286,6 +286,12 @@ class Sim(private val store: Store) {
      * never move relative to its hitbox. Shake moves the WORLD.
      */
     var shake = 0f; private set
+
+    /** Ticks the world is frozen for impact. Tiny, and never drops a tick. */
+    var hitStop = 0f; private set
+
+    /** The weather over the sector this sortie is flown in. */
+    var weather = Weather.CLEAR; private set
     fun shakeOffset(): Int =
         if (shake <= 0f || reducedMotion) 0
         else ((kotlin.math.sin((ticks * 1.7f).toDouble()) * shake).toInt())
@@ -615,6 +621,8 @@ class Sim(private val store: Store) {
         turnFlash = 0f; landFlash = 0f
         goArounds = 0
         shake = 0f
+        hitStop = 0f
+        weather = Weather.forSector(sectorIndex())
         damaged.clear()
         fuel = Tune.FUEL_FULL
         lagBuf = FloatArray(16); lagHead = 0
@@ -849,6 +857,10 @@ class Sim(private val store: Store) {
         // already in the air, the searchlights, the reload timers. `ticks`
         // keeps running so the card's prompt can still blink.
         if (paused) return
+        // Hit-stop: the world holds for a few ticks so the eye reads the
+        // impact as weight. The counter is burned down with the SAME dt it
+        // would have advanced by, so no physics tick is ever lost.
+        if (hitStop > 0f) { hitStop = max(0f, hitStop - dt); return }
         // The count-in is frozen for every one of its ticks; the first tick
         // that flies is the one after it. Letting the last tick fall through
         // into live physics would hand the world back half a frame early,
@@ -889,12 +901,14 @@ class Sim(private val store: Store) {
         vy += if (stick) -climbAcc() * dt else Tune.GRAVITY * dt
         // a holed wing sinks whatever you do; you have to fly it off
         if (isDamaged(PART_WING)) vy += Tune.DMG_WING_VY * dt
+        vy += Weather.gust(weather, ticks) * dt
         vy = vy.coerceIn(-plane.vyUp, plane.vyDown)
         py += vy * dt
         if (py < Tune.CEIL_ROW) { py = Tune.CEIL_ROW; if (vy < 0f) vy = 0f }
 
         val t = ((vy + plane.vyUp) / (plane.vyUp + plane.vyDown)).coerceIn(0f, 1f)
-        speed = plane.speedMin + (speedMax() - plane.speedMin) * t
+        speed = (plane.speedMin + (speedMax() - plane.speedMin) * t) *
+            Weather.speedScale(weather)
         camX += speed * dir * dt
         distance += speed * dt
 
@@ -990,7 +1004,12 @@ class Sim(private val store: Store) {
             when (s.kind) {
                 K_BULLET -> s.vy += Tune.GUN_DROP * dt
                 K_EBULLET -> { }
-                K_BOMB -> s.vy += Tune.BOMB_GRAV * dt
+                K_BOMB -> {
+                    s.vy += Tune.BOMB_GRAV * dt
+                    // a crosswind means the bomb no longer goes where the
+                    // nose was pointing when you let it go
+                    s.vx += Weather.bombDrift(weather) * dt
+                }
                 K_SHELL -> {
                     s.fuse -= dt
                     if (s.fuse <= 0f) { detonate(s.x, s.y, Tune.FLAK_LETHAL, true); s.alive = false; continue }
@@ -1110,6 +1129,7 @@ class Sim(private val store: Store) {
         chain = if (chainTimer > 0f) minOf(Tune.CHAIN_MAX, chain + 1) else 1
         chainTimer = Tune.CHAIN_WINDOW
         if (chain > bestChain) bestChain = chain
+        hitStop = max(hitStop, Tune.STOP_KILL)
         if (chain < 2) return 0
         chainFlash = 44f
         val bonus = Tune.PTS_CHAIN * chain * mult
@@ -1298,8 +1318,10 @@ class Sim(private val store: Store) {
         if (shots.count { it.alive && it.kind == K_SHELL } >= MAX_SHELLS) return false
 
         // aim error: precise down low, guesswork up high - the greed dial
-        val err = if (lockTicks > 0f) Tune.AIM_ERR_LOCKED
-        else Tune.AIM_ERR_LOW + (Tune.AIM_ERR_HIGH - Tune.AIM_ERR_LOW) * altFrac()
+        val err = (if (lockTicks > 0f) Tune.AIM_ERR_LOCKED
+                   else Tune.AIM_ERR_LOW +
+                        (Tune.AIM_ERR_HIGH - Tune.AIM_ERR_LOW) * altFrac()) *
+                  Weather.aimScale(weather)
         val sign = if ((World.hash32(k * 7919 + ticks.toInt()) and 1u) == 0u) 1f else -1f
         val jit = ((World.hash32(k * 104729 + ticks.toInt() * 7) and 0xFFFFu).toFloat() / 65535f)
 
@@ -1506,6 +1528,7 @@ class Sim(private val store: Store) {
         } else lastLoss = cause
         lifeFlash = Tune.LIFE_FLASH
         shake = Tune.SHAKE_HIT
+        hitStop = Tune.STOP_HIT
         if (lives <= 0) {
             lives = 0
             crashed = true

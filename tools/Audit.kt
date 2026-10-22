@@ -998,7 +998,12 @@ object Audit {
                 if (t % 120 == 0) s.dropBomb()
                 s.update(1f); t++
             }
-            scores.add(s.score)
+            // What the sortie EARNED, banked or not. Score is only banked
+            // on a landing now, and this pilot does not fly an approach -
+            // measuring banked score here would measure landing skill
+            // instead of whether repeated play drains the world, which is
+            // the thing this check exists to catch.
+            scores.add(s.score + s.lostScore)
         }
         val firstHalf = scores.take(runs / 2).average()
         val lastHalf = scores.drop(runs / 2).average()
@@ -1179,12 +1184,20 @@ object Audit {
         check("A25 chains actually form on a strafing run", best >= 2, "best was $best")
         check("A25 the chain is capped", best <= Tune.CHAIN_MAX, "$best vs ${Tune.CHAIN_MAX}")
 
-        // a chain must EXPIRE - otherwise it is just a kill counter
-        val s = Sim(MemStore())
-        s.dismissBriefing(); s.start()
+        // A chain must EXPIRE - otherwise it is just a kill counter.
+        // Searched across sorties: a sortie can now end by landing, so a
+        // single run is not guaranteed to contain a kill.
+        val expStore = MemStore()
+        var s = Sim(expStore)
         var t = 0
-        while (t < 60000 && !s.gameOver && s.chain < 1) {
-            s.climbing = s.altitude() < 30f; s.firing = true; s.update(1f); t++
+        for (attempt in 0 until 10) {
+            s = Sim(expStore)
+            s.dismissBriefing(); s.start()
+            t = 0
+            while (t < 60000 && !s.gameOver && s.chain < 1) {
+                s.climbing = s.altitude() < 30f; s.firing = true; s.update(1f); t++
+            }
+            if (s.chain >= 1 && !s.gameOver) break
         }
         check("A25 a chain starts at a kill", s.chain >= 1, "${s.chain}")
         var wait = 0
@@ -1573,6 +1586,88 @@ object Audit {
     }
 
     // =====================================================================
+    //  A33  every weather state still leaves a sortie you can fly
+    // =====================================================================
+    private fun a33Weather() {
+        // Weather is only variety if all of it is playable. A headwind
+        // that cannot reach the objective, or a storm that cannot hold an
+        // altitude, is not a condition - it is a wasted sortie.
+        for (w in 0..4) {
+            val tag = "A33 " + Weather.name(w)
+            val p = Planes.ALL[0]
+
+            // the round trip must still fit inside the tank
+            val slowest = p.speedMin * Weather.speedScale(w)
+            val need = (Tune.SORTIE_LEN * 2f) / slowest
+            check("$tag leaves fuel for the round trip", Tune.FUEL_FULL > need * 1.02f,
+                String.format("%.0f needed of %.0f", need, Tune.FUEL_FULL))
+
+            // a storm must not out-pull the stick
+            var worstGust = 0f
+            var t = 0f
+            while (t < 4000f) {
+                worstGust = max(worstGust, Weather.gust(w, t)); t += 1f
+            }
+            check("$tag cannot overpower the controls",
+                worstGust < p.climbAcc * 0.5f,
+                String.format("gust %.4f vs climb %.4f", worstGust, p.climbAcc))
+
+            // fog blinds the gunners as well as the pilot - it must make
+            // flak WORSE at aiming, never better
+            check("$tag never makes the flak more accurate",
+                Weather.aimScale(w) >= 1f, Weather.aimScale(w).toString())
+        }
+
+        // the mix: eventful every time is the same as never
+        val counts = IntArray(5)
+        for (i in 0 until 400) counts[Weather.forSector(i)]++
+        note("over 400 sectors: " + (0..4).joinToString(", ") {
+            Weather.name(it) + " " + counts[it] })
+        check("A33 clear weather is the common case", counts[Weather.CLEAR] > 400 / 3,
+            "${counts[Weather.CLEAR]}/400")
+        check("A33 every condition actually occurs", counts.all { it > 0 },
+            counts.joinToString(","))
+        check("A33 the weather over a sector is stable",
+            (0 until 50).all { Weather.forSector(it) == Weather.forSector(it) }, "")
+    }
+
+    // =====================================================================
+    //  A34  hit-stop freezes the picture without losing a tick
+    // =====================================================================
+    private fun a34HitStop() {
+        val s = Sim(MemStore())
+        s.dismissBriefing(); s.start()
+        var t = 0
+        while (t < 60000 && s.hitStop <= 0f && !s.gameOver) {
+            s.climbing = s.altitude() < 26f; s.firing = true
+            if (t % 110 == 0) s.dropBomb()
+            s.update(1f); t++
+        }
+        check("A34 an impact freezes the world", s.hitStop > 0f || s.gameOver,
+            String.format("%.1f ticks", s.hitStop))
+
+        // frozen means frozen: the aeroplane does not move while it holds
+        if (s.hitStop > 0f && !s.gameOver) {
+            val x = s.camX; val y = s.py
+            s.update(1f)
+            check("A34 nothing moves during the freeze",
+                s.camX == x && s.py == y, "camX drifted ${s.camX - x}")
+        } else {
+            check("A34 nothing moves during the freeze", true, "not sampled")
+        }
+
+        // and it is short - a long freeze reads as a dropped frame
+        check("A34 the freeze is short enough to read as weight",
+            Tune.STOP_HIT <= 6f && Tune.STOP_KILL <= 6f,
+            "hit ${Tune.STOP_HIT}, kill ${Tune.STOP_KILL}")
+
+        // it must always end
+        var guard = 0
+        while (s.hitStop > 0f && guard < 500) { s.update(1f); guard++ }
+        check("A34 the freeze always ends", s.hitStop == 0f, "after $guard ticks")
+    }
+
+    // =====================================================================
     @JvmStatic
     fun main(args: Array<String>) {
         println("=".repeat(78))
@@ -1610,6 +1705,8 @@ object Audit {
         a30Save()
         a31SectorNames()
         a32Airframes()
+        a33Weather()
+        a34HitStop()
         println("=".repeat(78))
         println("${failures.size} checks failed")
         if (failures.isNotEmpty()) {

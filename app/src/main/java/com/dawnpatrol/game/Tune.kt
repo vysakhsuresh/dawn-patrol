@@ -177,6 +177,23 @@ object Tune {
     const val SHAKE_HIT = 2.4f
     const val SHAKE_SECTOR = 1.6f
 
+    // ---- hit-stop -------------------------------------------------------
+    // Freeze the world for a few ticks on impact. The cheapest juice that
+    // exists: the eye reads the frozen frame as weight. Kept tiny - at 60Hz
+    // even four ticks is noticeable and eight feels broken.
+    const val STOP_KILL = 2f
+    const val STOP_HIT = 4f
+
+    // ---- weather ---------------------------------------------------------
+    // Chosen per sortie from the sector, so it is a property of WHERE you
+    // are flying rather than a die roll, and the briefing can name it
+    // before you take off.
+    const val WIND_HEAD = 0.84f       // multiplier on both speeds
+    const val WIND_CROSS = 0.055f     // rows/tick of lateral drift on bombs
+    const val FOG_AIM = 3.1f          // multiplier on the gun's aim error
+    const val FOG_VEIL = 26           // dither density of the murk
+    const val GUST_V = 0.016f         // rows/tick^2 of vertical gusting
+
     // ---- damage ---------------------------------------------------------
     // A hit damages a PART, not an abstract life. Each part has one
     // readable consequence, and the smoke trail is the readout so you can
