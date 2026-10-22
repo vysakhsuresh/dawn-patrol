@@ -218,6 +218,31 @@ class Fb(val w: Int, val h: Int) {
         }
     }
 
+    /**
+     * Shift rows [y0,y1) vertically by dy, filling the vacated band with
+     * `fill`. Used for camera shake.
+     *
+     * Shifting the whole playfield rather than individual draws is what
+     * makes shake provably honest: the aeroplane and the ground move
+     * TOGETHER, so nothing the player aims at changes position relative to
+     * anything else, and the hitbox - which lives in world coordinates -
+     * is untouched. Audit A29.
+     */
+    fun shiftRows(y0: Int, y1: Int, dy: Int, fill: Int = 0) {
+        if (dy == 0) return
+        val a = y0.coerceIn(0, h); val b = y1.coerceIn(0, h)
+        if (b - a <= 0) return
+        val band = ByteArray((b - a) * w)
+        System.arraycopy(p, a * w, band, 0, band.size)
+        java.util.Arrays.fill(p, a * w, b * w, fill.toByte())
+        for (y in a until b) {
+            val src = y - a
+            val dst = y + dy
+            if (dst < a || dst >= b) continue
+            System.arraycopy(band, src * w, p, dst * w, w)
+        }
+    }
+
     // ---- text ----------------------------------------------------------
     fun text(s: String, x: Int, y: Int, v: Int = 1, sp: Int = 1, scale: Int = 1): Int {
         var cx = x

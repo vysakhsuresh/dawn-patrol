@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The save holds a campaign: rank, orders, the front, the destroyed set.
+  It is worth keeping across a reinstall, but it is version-stamped (see
+  Sim.load) so a blob restored from an older build is migrated or reset
+  rather than read as if it were current.
+-->
+<full-backup-content>
+    <include domain="sharedpref" path="dawn_patrol.xml" />
+</full-backup-content>

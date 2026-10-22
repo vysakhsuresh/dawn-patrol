@@ -170,6 +170,13 @@ object Tune {
     const val HOME_SAFE = 400f        // rows around base with no enemy fire
     const val TURN_FLASH = 100f       // ticks the TURN FOR HOME banner holds
 
+    // ---- shake --------------------------------------------------------
+    // Rows of camera offset. Small: at 100x175 a two-row shake is already
+    // violent, and anything that moves the whole world has to stay under
+    // the threshold where the player loses track of the aeroplane.
+    const val SHAKE_HIT = 2.4f
+    const val SHAKE_SECTOR = 1.6f
+
     // ---- damage ---------------------------------------------------------
     // A hit damages a PART, not an abstract life. Each part has one
     // readable consequence, and the smoke trail is the readout so you can

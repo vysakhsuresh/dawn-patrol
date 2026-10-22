@@ -136,7 +136,11 @@ class Renderer {
     }
 
     // =====================================================================
+    /** Rows the world is offset by this frame. The aeroplane never moves. */
+    private var shakeY = 0
+
     fun render(sim: Sim) {
+        shakeY = sim.shakeOffset()
         val pal = palette(sim.phase())
         val night = pal.night
         fb.clear(0)
@@ -155,6 +159,12 @@ class Renderer {
         // world still scrolls behind the card, so the scene stays alive.
         if (sim.started || sim.crashed || !sim.showFullBriefing) plane(sim, night)
         pips(sim)
+        // Shake the PLAYFIELD only, after it is composed and before the
+        // HUD goes on: the aeroplane and the ground move together, so
+        // nothing moves relative to anything else and the hitbox - which
+        // lives in world coordinates - is untouched. A shaking HUD would
+        // just be unreadable.
+        if (shakeY != 0) fb.shiftRows(Art.SKY_TOP, Art.GH, shakeY, if (night) 0 else 0)
         hud(sim, night)
     }
 
@@ -837,7 +847,7 @@ class Renderer {
         // The orders are the reason to take off, so they are the thing on
         // screen while the player's thumb is hovering.
         ordersBlock(sim, 32)
-        val sect = "SECTOR " + (sim.frontX / Tune.SECTOR_ROWS).toInt()
+        val sect = sim.sectorName()
         fb.plateText(sect, 6, 20, 1, 1, 1, 1)
         if (sim.bestScore > 0) {
             val b = "BEST " + sim.bestScore

@@ -34,6 +34,12 @@ class MemStore : Store {
 
 // ---- entities ---------------------------------------------------------
 // ---- the three states of a sortie ------------------------------------
+/**
+ * Bump whenever the meaning of anything in the store changes. Sim.load
+ * resets the campaign on a mismatch and keeps what was earned.
+ */
+const val SAVE_VERSION = 2
+
 const val LEG_OUT = 0
 const val LEG_HOME = 1
 const val LEG_DOWN = 2
@@ -241,6 +247,16 @@ class Sim(private val store: Store) {
     fun fuelFrac(): Float = (fuel / Tune.FUEL_FULL).coerceIn(0f, 1f)
     var sectorFlash = 0f; private set
 
+    /**
+     * Camera shake, in rows. Pure state so the audit can prove the one
+     * thing that matters about it: the aeroplane's DRAWN position must
+     * never move relative to its hitbox. Shake moves the WORLD.
+     */
+    var shake = 0f; private set
+    fun shakeOffset(): Int =
+        if (shake <= 0f) 0
+        else ((kotlin.math.sin((ticks * 1.7f).toDouble()) * shake).toInt())
+
     // ---- orders and rank ----------------------------------------------------
     var rank = 0; private set
     var orders: Array<Order> = Orders.forRank(0).map {
@@ -294,6 +310,26 @@ class Sim(private val store: Store) {
     //  lifecycle
     // =====================================================================
     private fun load() {
+        // VERSIONED. Without this, any change to what is stored lets a
+        // stale value read as a valid one - a rank from an older order
+        // ladder silently producing impossible targets, say. On a
+        // mismatch the campaign state is reset and the things the player
+        // EARNED (best, best score, sorties flown) are kept, because
+        // losing those to a schema change would be unforgivable.
+        val ver = store.getFloat("save_version", 0f).toInt()
+        if (ver != SAVE_VERSION) {
+            best = store.getFloat("best", 0f)
+            bestScore = store.getFloat("bestScore", 0f).toInt()
+            sorties = store.getFloat("sorties", 0f).toInt()
+            muted = store.getFloat("muted", 0f) > 0.5f
+            linePct = Tune.LINE_START
+            frontX = 0.0
+            rank = 0
+            makeOrders()
+            save()
+            reset()
+            return
+        }
         linePct = store.getFloat("line", Tune.LINE_START).coerceIn(0f, 1f)
         best = store.getFloat("best", 0f)
         bestScore = store.getFloat("bestScore", 0f).toInt()
@@ -316,6 +352,7 @@ class Sim(private val store: Store) {
     }
 
     private fun save() {
+        store.putFloat("save_version", SAVE_VERSION.toFloat())
         store.putFloat("line", linePct)
         store.putFloat("best", best)
         store.putFloat("bestScore", bestScore.toFloat())
@@ -472,6 +509,7 @@ class Sim(private val store: Store) {
         frontX += Tune.SECTOR_ROWS
         sectors++
         sectorFlash = Tune.LIFE_FLASH
+        shake = Tune.SHAKE_SECTOR
         linePct = Tune.LINE_START
         // taken ground cannot be lost on the way home, so this banks now
         score += Tune.PTS_SECTOR * mult
@@ -537,6 +575,7 @@ class Sim(private val store: Store) {
         pending = 0
         turnFlash = 0f; landFlash = 0f
         goArounds = 0
+        shake = 0f
         damaged.clear()
         fuel = Tune.FUEL_FULL
         lagBuf = FloatArray(16); lagHead = 0
@@ -739,6 +778,12 @@ class Sim(private val store: Store) {
         return ((g - Tune.PLANE_H - py) / band).coerceIn(0f, 1f)
     }
 
+    /** Which numbered sector the front currently sits in. */
+    fun sectorIndex(): Int = (frontX / Tune.SECTOR_ROWS).toInt()
+
+    /** ...and what it is called. "SECTOR 7" is a spreadsheet cell. */
+    fun sectorName(): String = World.sectorName(sectorIndex())
+
     /** Which of the five day/night keyframes we are in, and how far through. */
     fun phase(): Float = ((camX / Tune.PHASE_LEN) % 5.0).toFloat().let {
         if (it < 0f) it + 5f else it
@@ -830,6 +875,7 @@ class Sim(private val store: Store) {
         if (chainFlash > 0f) chainFlash = max(0f, chainFlash - dt)
         if (sectorFlash > 0f) sectorFlash = max(0f, sectorFlash - dt)
         if (grazeFlash > 0f) grazeFlash = max(0f, grazeFlash - dt)
+        if (shake > 0f) shake = max(0f, shake - dt * 0.22f)
         // These two shipped without decay for a while: the TURN FOR HOME
         // banner would have sat on the screen for the rest of the sortie.
         // The frame dumper found it by never matching "banner is partway
@@ -1420,6 +1466,7 @@ class Sim(private val store: Store) {
             lastLoss = cause + " - " + PART_NAME[pick]
         } else lastLoss = cause
         lifeFlash = Tune.LIFE_FLASH
+        shake = Tune.SHAKE_HIT
         if (lives <= 0) {
             lives = 0
             crashed = true

@@ -162,6 +162,8 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         val grazesBefore = sim.grazes
         val sectorsBefore = sim.sectors
         val legBefore = sim.leg
+        val chainBefore = sim.chain
+        val promotedBefore = sim.promoted
 
         sim.update(dt)
 
@@ -172,7 +174,14 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             // feel the same in the hand
             if (sim.landed) buzz(40, 120) else buzz(140, 255)
         }
-        if (countBursts() > burstsBefore) sound.playThud()
+        if (countBursts() > burstsBefore) {
+            // near or far decides WHICH sound, not how loud
+            if (sim.shake > 0.4f || sim.grazeFlash > 0f) sound.playThudNear()
+            else sound.playThud()
+        }
+        if (sim.chain > chainBefore && sim.chain >= 2) sound.playChain()
+        if (sim.sectors > sectorsBefore || sim.promoted != promotedBefore) sound.playFanfare()
+        sound.engineSick = sim.isDamaged(PART_ENGINE)
         if (sim.grazes > grazesBefore) buzz(12, 70)
         if (sim.sectors > sectorsBefore) buzz(90, 200)
         if (sim.leg != legBefore && sim.leg == LEG_HOME) buzz(30, 150)

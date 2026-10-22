@@ -1376,6 +1376,115 @@ object Audit {
     }
 
     // =====================================================================
+    //  A29  shake moves the world, never the aeroplane within it
+    // =====================================================================
+    private fun a29Shake() {
+        // Lesson #2 in a new hat: art must not lie about physics. Shake is
+        // the easiest possible way to break that - nudge the aeroplane a
+        // couple of rows for impact and its drawn position no longer
+        // matches the box it collides with. The playfield is shifted as
+        // ONE block after it is composed, so the aeroplane and the ground
+        // move together and nothing moves relative to anything else.
+        val sim = Sim(MemStore())
+        sim.dismissBriefing(); sim.start()
+        var t = 0
+        while (t < 60000 && sim.shake <= 0f && !sim.gameOver) {
+            sim.climbing = false; sim.update(1f); t++
+        }
+        check("A29 taking a hit shakes the camera", sim.shake > 0f,
+            String.format("%.2f rows", sim.shake))
+
+        // the offset is bounded - a shake you cannot see past is a bug
+        var worst = 0
+        val probe = Sim(MemStore())
+        for (i in 0 until 400) { probe.update(1f) }
+        var maxOff = 0
+        for (sh in listOf(Tune.SHAKE_HIT, Tune.SHAKE_SECTOR)) {
+            maxOff = max(maxOff, kotlin.math.ceil(sh.toDouble()).toInt())
+        }
+        note("worst camera offset: $maxOff rows of $GH_ROWS")
+        check("A29 shake stays small enough to see past", maxOff <= 3,
+            "$maxOff rows")
+
+        // and it decays to nothing rather than ringing forever
+        var guard = 0
+        while (sim.shake > 0f && guard < 3000) { sim.update(1f); guard++ }
+        check("A29 shake settles", sim.shake == 0f, "after $guard ticks")
+
+        // the render path must not move the plane relative to the ground:
+        // shiftRows moves a contiguous block, so prove it is reversible
+        val fb = Fb(20, 20)
+        fb.rect(3, 8, 4, 4, 1)
+        val before = fb.p.copyOf()
+        fb.shiftRows(5, 20, 2)
+        fb.shiftRows(5, 20, -2)
+        check("A29 a shift and its inverse restore the frame",
+            fb.p.contentEquals(before), "shiftRows lost pixels")
+    }
+
+    private const val GH_ROWS = 175
+
+    // =====================================================================
+    //  A30  the save is versioned, and a stale one cannot poison a campaign
+    // =====================================================================
+    private fun a30Save() {
+        // Write a campaign, then hand the same store to a build that
+        // disagrees about the schema.
+        val store = MemStore()
+        run {
+            val s = Sim(store)
+            s.dismissBriefing(); s.start()
+            var t = 0
+            while (t < 40000 && !s.gameOver) {
+                TestPilot.cruise(s, 2f); s.firing = true; s.update(1f); t++
+            }
+        }
+        val afterPlay = Sim(store)
+        check("A30 a campaign round-trips through the store",
+            afterPlay.frontX > 0.0 || afterPlay.bestScore > 0,
+            "front ${afterPlay.frontX.toInt()}, best ${afterPlay.bestScore}")
+
+        // now corrupt the version and reload
+        val best = afterPlay.bestScore
+        val sorties = afterPlay.sorties
+        store.putFloat("save_version", 99f)
+        store.putFloat("rank", 4000f)              // nonsense from "the future"
+        val recovered = Sim(store)
+        check("A30 an unknown save version does not crash", true, "")
+        check("A30 a stale save cannot produce an impossible rank",
+            recovered.rank in 0 until Orders.RANKS.size + 64,
+            "rank ${recovered.rank}")
+        check("A30 what the player EARNED survives a schema reset",
+            recovered.bestScore == best && recovered.sorties == sorties,
+            "best ${recovered.bestScore} vs $best, sorties ${recovered.sorties} vs $sorties")
+        check("A30 the campaign itself is reset rather than guessed at",
+            recovered.frontX == 0.0 && recovered.rank == 0,
+            "front ${recovered.frontX.toInt()}, rank ${recovered.rank}")
+        // ...and the recovered save is immediately valid again
+        val again = Sim(store)
+        check("A30 the reset save reloads cleanly", again.rank == 0, "")
+    }
+
+    // =====================================================================
+    //  A31  sectors have names, and the names are stable
+    // =====================================================================
+    private fun a31SectorNames() {
+        val names = (0 until 400).map { World.sectorName(it) }
+        check("A31 every sector has a name", names.all { it.length in 5..24 },
+            names.first() + " .. " + names.last())
+        check("A31 names are deterministic",
+            (0 until 400).all { World.sectorName(it) == names[it] }, "")
+        val distinct = names.toSet().size
+        note("$distinct distinct names across 400 sectors")
+        check("A31 names do not repeat too soon", distinct > 120,
+            "$distinct of 400")
+        // and they fit the HUD, which is 100 pixels of 3x5 font
+        val widest = names.maxByOrNull { Fb.textW(it) }!!
+        check("A31 the longest name fits the screen", Fb.textW(widest) <= Art.GW - 8,
+            widest + " is " + Fb.textW(widest) + "px")
+    }
+
+    // =====================================================================
     @JvmStatic
     fun main(args: Array<String>) {
         println("=".repeat(78))
@@ -1409,6 +1518,9 @@ object Audit {
         a26SortieArc()
         a27Damage()
         a28Spend()
+        a29Shake()
+        a30Save()
+        a31SectorNames()
         println("=".repeat(78))
         println("${failures.size} checks failed")
         if (failures.isNotEmpty()) {

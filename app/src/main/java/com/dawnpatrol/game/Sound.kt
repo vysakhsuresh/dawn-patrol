@@ -37,6 +37,12 @@ class Sound {
     @Volatile private var bomb: AudioTrack? = null
     @Volatile private var thud: AudioTrack? = null
     @Volatile private var hit: AudioTrack? = null
+    // Near and far flak are DIFFERENT SOUNDS, not the same sound quieter.
+    // The near one is the graze cue - the thing that tells you how close
+    // that was without taking your eyes off the aeroplane.
+    @Volatile private var thudNear: AudioTrack? = null
+    @Volatile private var chainUp: AudioTrack? = null
+    @Volatile private var fanfare: AudioTrack? = null
     @Volatile private var released = false
 
     /** Silences the effects and the drone without tearing anything down. */
@@ -66,6 +72,27 @@ class Sound {
                 n * exp(-t * 14.0) * 0.6
             }
             hit = clip(0.5) { t -> sin(2.0 * PI * (160.0 - 120.0 * t) * t) * exp(-t * 4.0) }
+            // close flak: a hard crack with air in it, not a soft thump
+            thudNear = clip(0.28) { t ->
+                val crack = sin(2.0 * PI * 320.0 * t) + 0.8 * sin(2.0 * PI * malt(t))
+                val air = sin(2.0 * PI * 2100.0 * t) * exp(-t * 26.0) * 0.35
+                (crack * exp(-t * 19.0) * 0.55 + air)
+            }
+            // a chain going up: three rising partials, each one shorter
+            chainUp = clip(0.26) { t ->
+                val step = (t / 0.085).toInt().coerceAtMost(2)
+                val f = 520.0 * Math.pow(1.26, step.toDouble())
+                val local = t - step * 0.085
+                sin(2.0 * PI * f * t) * exp(-local * 22.0) * 0.5
+            }
+            // promotion / sector: a two-note bugle call, because this is
+            // the only moment in the game that deserves one
+            fanfare = clip(0.62) { t ->
+                val f = if (t < 0.22) 392.0 else 587.0
+                val local = if (t < 0.22) t else t - 0.22
+                (sin(2.0 * PI * f * t) + 0.5 * sin(2.0 * PI * f * 2 * t)) *
+                    exp(-local * 5.0) * 0.4
+            }
             if (released) release()
         } catch (e: Throwable) {
             gun = null; bomb = null; thud = null; hit = null
@@ -108,7 +135,13 @@ class Sound {
         } catch (e: Throwable) { /* never let audio take the game down */ }
     }
 
+    /** A touch of inharmonic grit, so the crack is not a pure tone. */
+    private fun malt(t: Double): Double = 437.0 + 90.0 * sin(2.0 * PI * 11.0 * t)
+
     fun playGun() = replay(gun)
+    fun playThudNear() = replay(thudNear)
+    fun playChain() = replay(chainUp)
+    fun playFanfare() = replay(fanfare)
     fun playBomb() = replay(bomb)
     fun playThud() = replay(thud)
     fun playHit() = replay(hit)
@@ -116,6 +149,13 @@ class Sound {
     // ---- engine -----------------------------------------------------------
     /** 0 = hauling back and slow, 1 = full dive. */
     fun setEnginePitch(v: Float) { enginePitch = v }
+
+    /**
+     * A damaged engine drops the note and roughens it. This is the damage
+     * readout you hear rather than read - paired with the smoke trail, the
+     * HUD becomes something you can stop looking at.
+     */
+    @Volatile var engineSick = false
 
     fun startEngine() {
         if (engineThread != null) return
@@ -150,7 +190,8 @@ class Sound {
                     // a rotary engine is a low buzz with a beating second
                     // partial - a pure sine reads as a test tone, not a motor
                     val p = enginePitch
-                    val f = 52.0 + 46.0 * p
+                    val sick = engineSick
+                    val f = (52.0 + 46.0 * p) * (if (sick) 0.72 else 1.0)
                     val step = 2.0 * PI * f / rate
                     val step2 = 2.0 * PI * (f * 2.51) / rate
                     for (i in chunk.indices) {
@@ -160,7 +201,8 @@ class Sound {
                         // clipped sine -> harmonics, so it sounds mechanical
                         val a = sin(phase)
                         val s = (if (a > 0.32) 0.32 else if (a < -0.32) -0.32 else a) * 2.2
-                        val gain = if (muted || suspended) 0.0 else 1.0
+                        val miss = if (sick && sin(2.0 * PI * 3.1 * phase) > 0.75) 0.35 else 1.0
+                    val gain = (if (muted || suspended) 0.0 else 1.0) * miss
                     val v = (s * 0.55 + sin(phase2) * 0.18) * (0.22 + 0.16 * p) * gain
                         chunk[i] = (v.coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort()
                     }
@@ -187,8 +229,11 @@ class Sound {
     fun release() {
         released = true
         stopEngine()
-        try { gun?.release(); bomb?.release(); thud?.release(); hit?.release() }
-        catch (e: Throwable) { }
+        try {
+            gun?.release(); bomb?.release(); thud?.release(); hit?.release()
+            thudNear?.release(); chainUp?.release(); fanfare?.release()
+        } catch (e: Throwable) { }
         gun = null; bomb = null; thud = null; hit = null
+        thudNear = null; chainUp = null; fanfare = null
     }
 }

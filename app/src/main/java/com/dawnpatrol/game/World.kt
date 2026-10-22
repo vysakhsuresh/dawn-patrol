@@ -39,6 +39,25 @@ object World {
         SANDBAG, BALLOON, TRENCH, DEPOT, TANK, SANDBAG, LIGHT, TRENCH
     )
 
+    // ---- sector names ----------------------------------------------------
+    // "SECTOR 7" reads like a spreadsheet cell. A name costs nothing,
+    // is deterministic from the index, and turns the front from a number
+    // into a place you have been.
+    private val PLACE = arrayOf(
+        "VERDUN", "BAPAUME", "ARRAS", "YPRES", "SOMME", "AMIENS", "CAMBRAI",
+        "MESSINES", "LOOS", "ALBERT", "PERONNE", "LENS", "VIMY", "MONS",
+        "SEDAN", "MARNE", "AISNE", "OISE", "SCARPE", "ANCRE")
+    private val FEATURE = arrayOf(
+        "RIDGE", "WOOD", "SALIENT", "CROSSING", "FARM", "QUARRY", "CUTTING",
+        "MARSH", "SPUR", "COPSE", "REDOUBT", "HOLLOW")
+
+    fun sectorName(index: Int): String {
+        val h = hash32(index * 2654435761.toInt() + 17)
+        val a = PLACE[(h % PLACE.size.toUInt()).toInt()]
+        val b = FEATURE[((h shr 11) % FEATURE.size.toUInt()).toInt()]
+        return a + " " + b
+    }
+
     /** Deterministic 32-bit hash. UInt so every shift below is logical. */
     fun hash32(n: Int): UInt {
         var h = n.toUInt() * 0x27D4EB2Du
