@@ -41,6 +41,35 @@ until you press the LEFT half, and that press *is* the climb — so the
 hand-over to physics starts with the nose coming up, never with a plane
 falling out of the sky. Audit A17.
 
+**The sortie has an arc.** TAKE OFF → OBJECTIVE → RETURN TO BASE, and the
+score is only yours *if you land*. Crossing the objective turns you round;
+you fly home over ground you already stripped, damaged, with everything
+you earned at risk. Base is a strip you can go around, the ground around
+it is friendly and flat, and the end card says how many rows from home you
+were when it went wrong. An ENDLESS mode sits alongside for score chasers.
+Audit A26.
+
+**A hit breaks something, and says what.** Engine, fuel, elevator, wing or
+guns — each with one readable consequence, and the smoke trail *is* the
+damage count so you can fly by the picture. Damage survives the respawn:
+you go on flying the machine you wrecked. Every one of the 32 combinations
+is provably still flyable. Audit A27.
+
+**The multiplier is spendable.** The greed meter buys a repair or a rearm,
+mid-flight, and spending resets it to 1 — push for ×9 or cash out and get
+home. The button is in the HUD on purpose: cashing in costs you a moment
+with your thumb off the stick. Audit A28.
+
+**Three aeroplanes, earned by rank.** Not stat bumps — a nimble scout, a
+triplane that climbs, a bomber that carries twelve. Each one re-runs the
+scout's whole fairness proof: dodge window, balloon clearance, control
+reversal, scout escape. A fast machine that cannot dodge is a trap sold as
+a reward. Audit A32.
+
+**Weather, chosen by sector.** Headwind, crosswind, fog, storm — the same
+ground has the same weather every time, so it is a place you remember
+rather than a die roll you resent. Audit A33.
+
 **The front is a place, not a bar.** A sortie launches from the front line
 itself, and you hold the ground you flew over as far as the meter says you
 do — fly 2000 rows with the line at 0.8 and the next sortie starts 1600 rows
@@ -152,6 +181,17 @@ is a statement about the game, not about a model of it.
     A23 the ladder always moves and never stalls      24 ranks, every sortie banks something
     A24 a graze is a near miss, never a hit           never while invulnerable, never at altitude
     A25 chains reward a planned run                   they form, they cap, they expire
+    A26 the sortie arc can always be completed        10/10 reach the objective, 10/10 land
+    A27 every damage combination is still flyable     32/32 can climb, wrecked still clears a balloon
+    A28 the multiplier can be spent, never strands    a repair costs the meter, the button never lies
+    A29 shake moves the world, not the aeroplane      playfield shifts as one block, shift is reversible
+    A30 the save is versioned                         a stale blob resets the campaign, keeps what was earned
+    A31 sectors have stable names                     190 distinct over 400, longest fits the screen
+    A32 every airframe keeps every guarantee          3 airframes x dodge, balloon, reversal, scout escape
+    A33 every weather state is flyable                fuel, gusts, and fog never helps the gunners
+    A34 hit-stop freezes without losing a tick        2-4 ticks, always ends
+    A35 same game at every screen shape               7 phone/tablet/foldable shapes, uniform scale
+    A36 the logbook keeps a campaign                  entries round-trip, medals awarded once
 
 ## Architecture
 
@@ -203,6 +243,13 @@ At night the structure inverts: the earth becomes the paper, features are pale
 outlines, and an aircraft caught in a beam is a **hole** punched in the light.
 Colours crossfade between five keyframes; the structural flip happens at the
 deep-dusk keyframe, where both sides are near-black, so nothing visibly jumps.
+
+## Privacy
+
+The game collects nothing. No analytics, no accounts, no ads, no network
+code of any kind - the app declares no permissions at all. Everything it
+remembers (your campaign, your logbook, your settings) lives in one
+SharedPreferences file on your own device and is never sent anywhere.
 
 ## Bugs we already paid for
 

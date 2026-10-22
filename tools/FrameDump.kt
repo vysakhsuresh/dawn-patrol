@@ -114,93 +114,47 @@ object FrameDump {
             write(r, r.palette(sim.phase()), "$dir/f2_strafe.ppm")
         }
 
-        // ---- B  paused, and the count-in that hands the world back --------
-        run {
-            val sim = Sim(MemStore())
-            sim.dismissBriefing(); sim.start()
-            var t = 0
-            while (t < 40000 && !(sim.shots.any { it.alive && it.kind == K_SHELL } &&
-                    sim.mult > 1 && !sim.gameOver)) {
-                sim.climbing = sim.altitude() < 26f
-                sim.firing = true
-                if (t % 150 == 0) sim.dropBomb()
-                sim.update(1f); t++
-            }
-            sim.pause()
-            // land on a tick where the blinking prompt is lit
-            while (((sim.ticks / 22f).toInt() and 1) != 0) sim.update(1f)
-            r.render(sim)
-            write(r, r.palette(sim.phase()), "$dir/fB_paused.ppm")
-            println("frameB paused: shells=" +
-                sim.shots.count { it.alive && it.kind == K_SHELL } + " mult=" + sim.mult)
-
-            // ...and the same world, mid count-in. Nothing has moved.
-            sim.requestResume()
-            while (sim.resumeDigit() != 2) sim.update(1f)
-            r.render(sim)
-            write(r, r.palette(sim.phase()), "$dir/fC_countin.ppm")
-            println("frameC count-in digit=" + sim.resumeDigit())
-        }
-
-        // ---- D  the orders screen, and the card that sells another sortie -
+        // ---- B  paused, and C the count-in that hands the world back -----
+        // Searched across sorties and every wait bounded: a sortie can now
+        // end by LANDING, and pause() is a no-op once a sortie is over, so
+        // the old unbounded `while (resumeDigit() != 2)` spun forever on a
+        // sim that could not be paused in the first place.
         run {
             val store = MemStore()
-            // play a few sorties so there is real progress to draw
-            var last: Sim? = null
-            for (i in 0 until 5) {
-                val s = Sim(store)
-                s.dismissBriefing(); s.start()
+            var done = false
+            for (att in 0 until 12) {
+                val sim = Sim(store)
+                sim.dismissBriefing(); sim.start()
                 var t = 0
-                while (t < 60000 && !s.gameOver) {
-                    s.climbing = s.altitude() < 30f
-                    s.firing = true
-                    if (t % 120 == 0) s.dropBomb()
-                    s.update(1f); t++
+                while (t < 20000 && !sim.gameOver) {
+                    sim.climbing = sim.altitude() < 26f
+                    sim.firing = true
+                    if (t % 150 == 0) sim.dropBomb()
+                    sim.update(1f); t++
+                    if (sim.shots.any { it.alive && it.kind == K_SHELL } &&
+                        sim.mult > 1 && sim.hitStop <= 0f) break
                 }
-                last = s
-            }
-            // the READY screen, with orders and the sector you launch into
-            val ready = Sim(store)
-            ready.dismissBriefing()
-            var t = 0
-            while (t < 140) { ready.update(1f); t++ }
-            r.render(ready)
-            write(r, r.palette(ready.phase()), "$dir/fD_orders.ppm")
-            println("frameD rank=" + ready.rank + " front=" + ready.frontX.toInt() +
-                " orders=" + ready.orders.joinToString(" ") { it.text() })
+                if (sim.gameOver || !sim.shots.any { it.alive && it.kind == K_SHELL }) continue
 
-            // and the end card from the sortie that just finished
-            val s = last!!
-            while (!s.canRestart()) s.update(1f)
-            r.render(s)
-            write(r, r.palette(s.phase()), "$dir/fE_endcard.ppm")
-            println("frameE score=" + s.score + " sectors=" + s.sectors +
-                " front+" + s.frontMoved.toInt() + " promoted=" + s.promoted)
-        }
+                sim.pause()
+                if (!sim.paused) continue
+                var g = 0
+                while (((sim.ticks / 22f).toInt() and 1) != 0 && g < 200) { sim.update(1f); g++ }
+                r.render(sim)
+                write(r, r.palette(sim.phase()), "$dir/fB_paused.ppm")
+                println("frameB paused: shells=" +
+                    sim.shots.count { it.alive && it.kind == K_SHELL } + " mult=" + sim.mult)
 
-        // ---- F  a sector being taken, mid-flight --------------------------
-        run {
-            val store = MemStore()
-            var shot = false
-            for (attempt in 0 until 8) {
-                val s = Sim(store)
-                s.dismissBriefing(); s.start()
-                var t = 0
-                while (t < 60000 && !s.gameOver && s.sectorFlash <= 0f) {
-                    s.climbing = s.altitude() < 30f
-                    s.firing = true
-                    if (t % 110 == 0) s.dropBomb()
-                    s.update(1f); t++
-                }
-                if (s.sectorFlash > 0f) {
-                    r.render(s)
-                    write(r, r.palette(s.phase()), "$dir/fF_sector.ppm")
-                    println("frameF sector taken, score=" + s.score)
-                    shot = true
-                    break
-                }
+                sim.requestResume()
+                g = 0
+                while (sim.resumeDigit() != 2 && g < 400) { sim.update(1f); g++ }
+                r.render(sim)
+                write(r, r.palette(sim.phase()), "$dir/fC_countin.ppm")
+                println("frameC count-in digit=" + sim.resumeDigit())
+                done = true
+                break
             }
-            if (!shot) println("frameF SKIPPED - no capture in 8 sorties")
+            if (!done) println("frameB/C SKIPPED - no pausable busy state in 12 sorties")
         }
 
         // ---- G/H/I  the return leg, the turn, and the landing card -------

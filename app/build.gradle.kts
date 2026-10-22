@@ -14,6 +14,24 @@ android {
         versionCode = 1
         versionName = "0.1"
     }
+    // Release signing, read from a keystore.properties that is NOT in the
+    // repo (and must never be). Without it the release build still
+    // configures and simply stays unsigned, so a checkout with no secrets
+    // is not a broken checkout.
+    signingConfigs {
+        create("release") {
+            val props = java.util.Properties()
+            val f = rootProject.file("keystore.properties")
+            if (f.exists()) {
+                f.inputStream().use { props.load(it) }
+                storeFile = rootProject.file(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
+    }
+
 
     buildTypes {
         release {

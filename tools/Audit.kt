@@ -1668,6 +1668,102 @@ object Audit {
     }
 
     // =====================================================================
+    //  A35  the playfield is the same game at every screen shape
+    // =====================================================================
+    private fun a35Aspect() {
+        // The logical canvas is fixed and uniformly scaled, so a tablet
+        // must get the same game as a phone - more decoration, never more
+        // sky to hide in or more warning of what is coming. This is the
+        // arithmetic GameView.onSizeChanged does.
+        val shapes = listOf(
+            1080 to 1920, 1080 to 2400, 1440 to 3200,   // phones
+            1600 to 2560, 2048 to 2732,                 // tablets
+            2208 to 1768, 1812 to 2176)                 // foldables, open
+        var worstScaleErr = 0.0
+        for ((w, h) in shapes) {
+            val sc = minOf(w.toDouble() / Art.LW, h.toDouble() / Art.LH)
+            val dw = (Art.LW * sc).toInt()
+            val dh = (Art.LH * sc).toInt()
+            // uniform: the two axes must agree to within a pixel of rounding
+            val err = kotlin.math.abs(dw.toDouble() / Art.LW - dh.toDouble() / Art.LH)
+            worstScaleErr = max(worstScaleErr, err)
+            // and it must always fit
+            check("A35 ${w}x${h} fits on screen", dw <= w && dh <= h, "$dw x $dh")
+        }
+        note(String.format("worst axis disagreement across %d shapes: %.6f",
+            shapes.size, worstScaleErr))
+        check("A35 the scale is uniform on every shape", worstScaleErr < 0.01,
+            String.format("%.6f", worstScaleErr))
+        check("A35 the playfield is a fixed number of cells everywhere",
+            Art.GW == 100 && Art.GH == 175, "${Art.GW}x${Art.GH}")
+    }
+
+    // =====================================================================
+    //  A36  the logbook keeps a campaign, and medals are never taken away
+    // =====================================================================
+    private fun a36Logbook() {
+        val store = MemStore()
+        var flown = 0
+        for (i in 0 until 8) {
+            val s = Sim(store)
+            s.dismissBriefing(); s.start()
+            var t = 0
+            while (t < 60000 && !s.gameOver) {
+                val toStrip = (s.planeWorldX() - s.baseX).toFloat()
+                if (s.leg == LEG_HOME && toStrip < Tune.HOME_SAFE) {
+                    val want = if (toStrip > Tune.LAND_ZONE) 24f else 7f
+                    s.climbing = s.altitude() < want
+                } else TestPilot.cruise(s, 2f)
+                s.firing = true
+                if (t % 150 == 0) s.dropBomb()
+                s.update(1f); t++
+            }
+            flown++
+        }
+        val book = Sim(store).log
+        note("after $flown sorties: ${book.totalSorties} logged, " +
+            "${book.totalLandings} landings, ${book.totalRows} rows, " +
+            "${book.medals.size} medals")
+        check("A36 every sortie reaches the logbook", book.totalSorties == flown,
+            "${book.totalSorties} of $flown")
+        check("A36 the recent list is capped", book.recent.size <= Logbook.MAX,
+            "${book.recent.size} entries")
+        check("A36 lifetime rows accumulate", book.totalRows > 0, "${book.totalRows}")
+
+        // a log entry must survive the round trip through the store intact
+        val sample = Sortie(1234, 2345, 2, true, "LANDED")
+        val back = Sortie.decode(sample.encode())
+        check("A36 a log entry round-trips", back != null && back.score == 1234 &&
+            back.rows == 2345 && back.sectors == 2 && back.landed &&
+            back.cause == "LANDED", sample.encode())
+
+        // a cause containing the separator must not corrupt the log
+        val nasty = Sortie(1, 2, 3, false, "FLAK | ENGINE")
+        val nback = Sortie.decode(nasty.encode())
+        check("A36 a separator in the cause cannot corrupt the log",
+            nback != null && nback.score == 1 && !nback.landed,
+            nasty.encode())
+
+        // medals are one-off and are never taken away
+        val lb = Logbook(MemStore())
+        val first = lb.award(Medals.CHAIN6, Medals.ACE)
+        val again = lb.award(Medals.CHAIN6)
+        check("A36 a medal is awarded once", first.size == 2 && again.isEmpty(),
+            "$first then $again")
+        check("A36 medals persist in the set", lb.medals.contains(Medals.CHAIN6), "")
+        check("A36 every medal has a name and a condition",
+            Medals.NAME.size == Medals.COUNT && Medals.HOW.size == Medals.COUNT &&
+            Medals.NAME.all { it.isNotEmpty() } && Medals.HOW.all { it.isNotEmpty() },
+            Medals.NAME.joinToString(","))
+
+        // ...and the names fit the card
+        val widest = Medals.NAME.maxByOrNull { Fb.textW("MEDAL  " + it) }!!
+        check("A36 the longest medal line fits the card",
+            Fb.textW("MEDAL  " + widest) <= Art.GW - 8,
+            widest + " is " + Fb.textW("MEDAL  " + widest) + "px")
+    }
+
+    // =====================================================================
     @JvmStatic
     fun main(args: Array<String>) {
         println("=".repeat(78))
@@ -1707,6 +1803,8 @@ object Audit {
         a32Airframes()
         a33Weather()
         a34HitStop()
+        a35Aspect()
+        a36Logbook()
         println("=".repeat(78))
         println("${failures.size} checks failed")
         if (failures.isNotEmpty()) {

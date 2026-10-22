@@ -1,5 +1,15 @@
 # Dawn Patrol — upgrade backlog
 
+> **STATUS (built):** R1 R2 R3 · T1 T2 T3 T4 · F1 F2 F3 F4 F5 ·
+> V2 V4 · S3 S4 · A1 A3 A4 A5 — 19 of 24, all audited.
+>
+> **STATUS (not built):** V1 set pieces · V3 named rival · V5 sortie
+> objectives · S1 ghost of best run · S2 daily seeded sortie ·
+> A2 teach by flying · S5 permadeath (deliberately — see its warning).
+>
+> A1 is partial: handedness and reduced motion are on the ready screen as
+> tap-to-change options rather than a separate settings panel.
+
 **This file is the thing to hand a CLI session.** Written against `f37cd14`.
 Give it one ID — "implement R1 from BACKLOG.md" — and it has everything it
 needs without re-deriving context.

@@ -51,6 +51,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private val px = IntArray(Art.GW * Art.GH)
     private val src = Rect(0, 0, Art.GW, Art.GH)
     private val dst = Rect()
+    private val barPaint = Paint()
     private val blitPaint = Paint().apply {
         isFilterBitmap = false   // nearest neighbour: pixels stay pixels
         isAntiAlias = false
@@ -324,9 +325,24 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     override fun onDraw(canvas: Canvas) {
         renderer.render(sim)
         Warmup.expand(renderer.fb, renderer.palette(sim.phase()), px)
+
         bmp.setPixels(px, 0, Art.GW, 0, 0, Art.GW, Art.GH)
 
-        canvas.drawColor(Color.BLACK)   // letterbox bars
+        // The bars are sky above and earth below, not black. On a tablet
+        // or a foldable the fixed 100x175 canvas leaves a lot of frame,
+        // and a black surround makes the game look like a phone app that
+        // was not finished. The playfield geometry is untouched - the
+        // extra area is decoration and can never be an advantage, which
+        // Audit A35 pins.
+        val pal = renderer.palette(sim.phase())
+        barPaint.color = pal.paper or (0xFF shl 24)
+        canvas.drawRect(0f, 0f, width.toFloat(), dst.top.toFloat(), barPaint)
+        canvas.drawRect(0f, 0f, dst.left.toFloat(), height.toFloat(), barPaint)
+        canvas.drawRect(dst.right.toFloat(), 0f, width.toFloat(),
+            height.toFloat(), barPaint)
+        barPaint.color = pal.ink or (0xFF shl 24)
+        canvas.drawRect(dst.left.toFloat(), dst.bottom.toFloat(),
+            dst.right.toFloat(), height.toFloat(), barPaint)
         canvas.drawBitmap(bmp, src, dst, blitPaint)
     }
 

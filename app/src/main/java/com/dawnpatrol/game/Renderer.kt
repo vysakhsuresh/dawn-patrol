@@ -864,6 +864,18 @@ class Renderer {
             val b = "BEST " + sim.bestScore
             fb.plateText(b, Art.GW - 6 - Fb.textW(b), 20, 1, 1, 1, 1)
         }
+        // the logbook in one line: what this pilot has actually done
+        val lb = sim.log
+        if (lb.totalSorties > 0) {
+            val t = lb.totalSorties.toString() + " SORTIES  " +
+                lb.totalLandings + " HOME  " + lb.totalSectors + " SECTORS"
+            fb.plateText(t, (Art.GW - Fb.textW(t)) / 2, 90, 1, 1, 1, 1)
+            if (lb.medals.isNotEmpty()) {
+                val m = lb.medals.size.toString() + "/" + Medals.COUNT + " MEDALS"
+                fb.plateText(m, (Art.GW - Fb.textW(m)) / 2, 82, 1, 1, 1, 1)
+            }
+        }
+
         // the aeroplane you are about to fly, and the ones you have earned
         val avail = Planes.unlockedAt(sim.rank)
         fb.rect(3, Art.PICK_Y - 2, Art.GW - 6, Art.PICK_H, 0)
@@ -942,13 +954,18 @@ class Renderer {
         if (promoted) rows.add(Orders.rankName(sim.rank) to 2)
 
         val newBest = sim.score >= sim.bestScore && sim.score > 0
-        rows.add(((if (newBest) "NEW BEST  " else "SCORE  ") + sim.score) to 1)
-
-        // The sting, and the sentence that makes a thumb tap again. Both
-        // are only shown when true - a fake near miss every time would be
-        // noticed in two runs and would poison every real one.
-        if (!sim.landed && sim.lostScore > 0) {
-            rows.add(("LOST  " + sim.lostScore) to 1)
+        if (sim.landed) {
+            rows.add(((if (newBest) "NEW BEST  " else "SCORE  ") + sim.score) to 1)
+        } else {
+            // "SCORE 0" after a sortie that shot up a dozen targets is a
+            // lie by omission. Say what it was worth, then say it went
+            // down with the aeroplane - that is the whole mechanic.
+            rows.add(("EARNED  " + (sim.score + sim.lostScore)) to 1)
+            if (sim.lostScore > 0) rows.add(("LOST  " + sim.lostScore) to 1)
+            if (sim.score > 0) rows.add(("KEPT  " + sim.score) to 1)
+            // The sentence that makes a thumb tap again. Only when true -
+            // a fake near miss every time would be noticed in two runs
+            // and would poison every real one.
             rows.add((sim.rowsFromBase.toInt().toString() + " ROWS FROM BASE") to 1)
         }
 
@@ -965,6 +982,9 @@ class Renderer {
                       else sim.sectors.toString() + " SECTORS TAKEN") to 1)
         }
         rows.add(("FRONT +" + sim.frontMoved.toInt() + " ROWS") to 1)
+        // A medal is a one-off. It gets its own line and its own shout,
+        // because the whole point is that it happened THIS sortie.
+        for (m in sim.freshMedals) rows.add(("MEDAL  " + Medals.NAME[m]) to 1)
 
         var h = 6
         for ((_, sc) in rows) h += if (sc == 2) 14 else 10

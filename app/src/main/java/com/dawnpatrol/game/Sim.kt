@@ -242,6 +242,13 @@ class Sim(private val store: Store) {
     /** Endless mode: no objective, no landing, fly until you are shot down. */
     var endless = false
 
+    // ---- the logbook ------------------------------------------------------
+    val log = Logbook(store)
+    /** Medals won by the sortie that just ended, for the card to shout. */
+    var freshMedals: List<Int> = emptyList(); private set
+    private var firedGunThisSortie = false
+    private var sectorsAtGunFire = 0
+
     // ---- the aeroplane --------------------------------------------------
     var plane: Plane = Planes.ALL[0]; private set
 
@@ -579,6 +586,19 @@ class Sim(private val store: Store) {
         frontMoved = distance * linePct * (if (landed) 1f else 0.5f)
         frontX += frontMoved
         // orders that measure a whole sortie are settled here
+        // the logbook, and whatever this sortie earned once and for all
+        log.record(Sortie(score + lostScore, distance.toInt(), sectors,
+            landed, crashCause))
+        val won = ArrayList<Int>()
+        if (bestChain >= 6) won.add(Medals.CHAIN6)
+        if (landed && damaged.isEmpty()) won.add(Medals.CLEAN_SORTIE)
+        if (sectors > 0 && !firedGunThisSortie) won.add(Medals.SECTOR_NO_GUNS)
+        if (landed && distance >= 3000f) won.add(Medals.LONG_HAUL)
+        if (Orders.isTopRank(rank)) won.add(Medals.ACE)
+        if (lastBombKill) won.add(Medals.LAST_BOMB)
+        freshMedals = log.award(*won.toIntArray())
+        log.save()
+
         bumpOrder(Orders.ROWS, distance.toInt())
         // Credit what the sortie EARNED, not only what it banked. Points
         // that went down with the aeroplane were still shot for, and A23
@@ -648,6 +668,7 @@ class Sim(private val store: Store) {
         paused = false
         resumeCount = 0f
         chain = 0; bestChain = 0; chainTimer = 0f; chainFlash = 0f
+        firedGunThisSortie = false; lastBombKill = false; freshMedals = emptyList()
         grazes = 0; grazeFlash = 0f
         promoted = false; ordersDone = 0
         frontMoved = 0f; sectors = 0; sectorFlash = 0f
@@ -970,7 +991,10 @@ class Sim(private val store: Store) {
     }
 
     // ---- player weapons ---------------------------------------------------
+    private var lastBombKill = false
+
     private fun fireGun() {
+        firedGunThisSortie = true
         val s = freeShot() ?: return
         s.alive = true; s.kind = K_BULLET
         s.x = noseWorldX().toFloat()
@@ -1059,7 +1083,8 @@ class Sim(private val store: Store) {
                 val earned = Tune.PTS_ENEMY * mult
                 earn(earned)
                 bumpOrder(Orders.SCOUTS, 1)
-                val bonus = registerKill()
+                if (bombs == 0) lastBombKill = true
+        val bonus = registerKill()
                 detonate(e.x + 8f, e.y + 4f, 8f, false)
                 freePip()?.let {
                     it.alive = true; it.x = e.x; it.y = e.y - 8f; it.age = 0f
