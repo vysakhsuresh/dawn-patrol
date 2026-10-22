@@ -1,286 +1,358 @@
 # Dawn Patrol — upgrade backlog
 
-Written against `f37cd14`. Each item is self-contained: hand a CLI session
-one ID and it has everything it needs.
+**This file is the thing to hand a CLI session.** Written against `f37cd14`.
+Give it one ID — "implement R1 from BACKLOG.md" — and it has everything it
+needs without re-deriving context.
 
-## Read this first (the rules every item inherits)
+---
 
-These are the house rules this codebase is built on. An item that breaks one
-of them is wrong even if it works.
+## 0. Rules every item inherits
+
+An item that breaks one of these is wrong even if it works.
 
 1. **No image or audio assets.** Sprites are `Array<String>` of `'X'`/`'.'`
-   in `Art.kt`; all sound is synthesised in `Sound.kt`. Never add a PNG, WAV
-   or OGG to `res/` (the launcher icon is the one exception and it is done).
+   in `Art.kt`; all sound is synthesised in `Sound.kt`. The launcher icon is
+   the one exception and it is finished.
 2. **Nothing that decides behaviour may touch `android.*`.** `Sim`,
-   `Renderer`, `Fb`, `World`, `Art`, `Tune`, `Orders`, `Warmup` are pure
-   Kotlin so `tools/Audit.kt` can run the shipped code. Only `GameView`,
-   `Sound` and `MainActivity` may import `android.*`.
-3. **Render and LOOK before you ship art or UI.** `tools/frames.sh` draws
-   real frames through the real renderer. `tools/planelab.sh` is the bench
-   for aeroplane silhouettes. Never describe a visual you have not viewed.
-4. **Every behavioural change gets an audit check.** `tools/audit.sh`,
-   currently 92 checks, 0 failures. A check that cannot fail is not a check:
-   prove the old behaviour was broken (A15, A21 and A22 all do this).
-5. **Measure, do not guess, when setting a number.** `FRONT_PER_LINE`,
+   `Renderer`, `Fb`, `World`, `Art`, `Tune`, `Orders`, `Warmup` stay pure so
+   `tools/Audit.kt` runs the shipped code. Only `GameView`, `Sound` and
+   `MainActivity` may import `android.*`.
+3. **Render and LOOK before shipping art or UI.** `tools/frames.sh` draws
+   real frames through the real renderer; `tools/planelab.sh` is the bench
+   for silhouettes. Never describe a visual you have not viewed.
+4. **Every behavioural change gets an audit check**, in the style of A1–A25.
+   A check that cannot fail is not a check: A15, A21 and A22 each prove the
+   old behaviour was broken. Currently 92 checks, 0 failures.
+5. **Measure, don't guess, when setting a number.** `FRONT_PER_LINE`,
    `GRAZE_R` and `PHASE_LEN` were all set from simulation output. Put the
    measurement in the comment.
-6. **The canvas is 100x175, 1-bit.** Text is a 3x5 font. If a glyph is
-   missing it renders as a silent gap — A18 catches it, but check the font
-   in `Art.FONT` before using a new character.
+6. **Canvas is 100x175, 1-bit, 3x5 font.** A missing glyph renders as a
+   silent gap — A18 catches it, but check `Art.FONT` first.
 7. Add any new pure file to the list in `tools/build.sh`.
 
----
+**Do not rebuild what exists:** greed multiplier, grazes, kill chains,
+standing orders + ranks, 3 lives, day/night cycle, pause + count-in,
+difficulty ramp, enemy scouts, warm-up, the advancing front, sector
+capture, the icon.
 
-## Tier 0 — protect what exists
-
-### T0.1 Continuous integration for the audit
-**Why:** 92 checks exist and nothing runs them automatically. One careless
-commit silently un-proves the lot.
-**Do:** a GitHub Actions workflow that runs `tools/kotlinc-setup.sh` then
-`tools/audit.sh` on push and PR, failing the build on a non-zero exit.
-Cache `~/.dawnpatrol-kt`.
-**Effort:** small.
-
-### T0.2 Actually build the APK in CI
-**Why:** `GameView.kt`, `Sound.kt` and `MainActivity.kt` (508 lines) are
-**never compiled by any automated step** — the off-device toolchain skips
-them deliberately because they import `android.*`. They only get compiled
-when you press Build in Android Studio. Every Android-layer change between
-your builds is unverified.
-**Do:** add `./gradlew assembleDebug` to the CI workflow with
-`android-actions/setup-android`. Upload the APK as an artifact so you can
-install a build without opening Android Studio.
-**Effort:** small. **Highest risk-reduction per line in this document.**
-
-### T0.3 Version the save file
-**Why:** `Sim.load()` reads bare keys with no schema version. Any future
-change to what is stored can read a stale value as a valid one — e.g. a
-`rank` from an older order ladder silently producing impossible targets.
-**Do:** write `save_version`; on mismatch, migrate explicitly or reset the
-affected keys only (never wipe `best`, `bestScore` or `front`).
-**Audit:** load a v1 blob into the current build and assert nothing is
-nonsense; assert an unknown future version does not crash.
-**Effort:** small.
-
-### T0.4 Backup rules
-**Why:** `allowBackup="true"` with no rules means Android may restore a save
-from a different device or build. Combined with T0.3 that is a corrupt-save
-path.
-**Do:** add `android:dataExtractionRules` / `fullBackupContent` that either
-excludes the prefs or includes them deliberately once T0.3 lands.
-**Effort:** tiny.
+**The stated principle, which must survive every item below:** the pull is
+*"I was two depots away"*, never *"I will lose my streak"*. No energy
+timers, no punishment for not playing, no pay-to-win, nothing online.
 
 ---
 
-## Tier 1 — combat depth (the real gap)
+## Tier R — the run arc (do this first, it is the upgrade)
 
-The last round added meta-progression. The moment-to-moment game is still
-**two verbs and one enemy type**: hold left, hold right, occasionally bomb,
-versus one scout that drifts toward your altitude. For "best fighter jet
-game" this tier matters more than everything below it combined.
+The game has no shape to a run and nothing to lose. R1–R3 are **one
+feature**; building them separately wastes most of their value.
 
-### T1.1 More than one aeroplane, unlocked by rank
-**Why:** you earn eight ranks and fly the identical machine at all of them.
-The reward for promotion is a word.
-**Do:** `tools/PlaneLab.kt` already holds drawn, fitted candidates —
-`TRIPLANE2` and `PARASOL2` — that were rendered, compared and never
-installed. Make the airframe a choice: each has different `CLIMB_ACC`,
-`VY_MAX_*`, `SPEED_*`, `BOMB_MAX` and hitbox. Unlock at ranks 2/4/6.
-**Audit:** every airframe must independently pass A4 (art inside hitbox),
-A6 (every shell dodgeable), A8 (balloons clearable) and A9 (reversal under
-0.5s). A fast airframe that cannot dodge is a trap, not a reward.
-**Effort:** medium. **Best value in this document.**
+### R1. The sortie needs a return leg
+A sortie currently ends only when three lives are gone — no climax, no
+arc. Make it **TAKE OFF → reach the objective → RETURN TO BASE**. Crossing
+the objective flips the scroll direction; you fly home over ground you
+already stripped, damaged, with everything you earned at risk. **Score is
+banked only if you land.**
 
-### T1.2 A second enemy aircraft type
-**Why:** one `Enemy` class, one behaviour, one sprite mirrored — so a
-head-on pass is two identical smudges (the `VS` column in
-`out/kt/planes.png` is that problem, drawn).
-**Do:** add a two-seater **bomber** that flies straight and level, ignores
-you, and is worth a lot — a target of opportunity rather than a duel; and
-make the existing scout visibly a different airframe from the player's.
-**Audit:** extend A13/A14 to each type; prove each is both reachable and
-avoidable.
-**Effort:** medium.
+Loss aversion beats accumulation. "Did I make it back?" is a story every
+run produces. Reuses existing terrain flown in reverse.
 
-### T1.3 Boss: the enemy ace
-**Why:** nothing in the game is an event. Sectors and promotions are
-systems; an arcade game needs a fight you remember.
-**Do:** at a sector boundary, or every N sectors, spawn a single ace that
-actually duels — leads its shots, matches your turns, takes several hits,
-and has a tell before it fires. Beating it should take a sector outright.
-**Audit:** prove it is beatable from any starting altitude with the control
-authority available, and that its shots are dodgeable on the A6 model.
-**Effort:** large. **Highest ceiling for "memorable".**
+Keep an **ENDLESS** mode alongside for pure score chasers.
 
-### T1.4 A third weapon
-**Why:** guns (flat, short, sag) and bombs (ballistic, ground only) leave an
-obvious hole: nothing for a target above or ahead of you at range.
-**Do:** rockets — limited, fast, flat, no sag, good against balloons and
-scouts, useless against dug-in ground targets. Bind to a right-side
-swipe-up or a double-tap so no new on-screen button is needed.
-**Audit:** prove rockets do not trivialise balloons (A8's clearance
-guarantee must still have a reason to exist).
-**Effort:** medium.
+*Audit:* RTB always reachable from the objective on worst-case damage and
+fuel; landing possible at any front position. Extend A6 — the dodge-window
+proof must hold flying right-to-left too.
+*Effort:* large. *Touches:* `Sim.kt` (scroll direction, landing state),
+`Renderer.kt`, `Tune.kt`.
 
-### T1.5 Damage states instead of binary lives
-**Why:** a hit is currently all-or-nothing. There is no "limping home",
-which is the single most characteristic feeling of the genre.
-**Do:** a hit that is not fatal damages a system: engine (lower
-`SPEED_MAX`), controls (lower `CLIMB_ACC`), or a smoking trail that marks
-you for the flak. Repaired on respawn.
-**Audit:** prove a fully damaged aeroplane can still clear a balloon and
-still dodge a shell — a damage state you cannot survive is just a delayed
-death.
-**Effort:** medium.
+### R2. Located damage instead of binary lives
+A hit damages a **part**, each with a distinct readable consequence:
 
-### T1.6 Weather and wind
-**Why:** `World.kt` has terrain and features and nothing atmospheric.
-`grep` for wind in `Sim.kt` returns nothing. Weather is free variety: it
-changes how the same ground plays.
-**Do:** per-sector wind (a constant added to `camX` drift, affecting bomb
-drift most), and low cloud that hides the ground until you descend into it.
-**Audit:** prove the worst wind still leaves every corridor flyable and
-every bomb able to reach a depot.
-**Effort:** medium.
+| Part | Consequence |
+|---|---|
+| ENGINE | `SPEED_MAX` / `CLIMB_ACC` fall; smoke trail lengthens |
+| FUEL | leak — puts a clock on the return leg |
+| ELEVATOR | control lag between input and `CLIMB_ACC` applying |
+| WING | constant `vy` bias you must hold against |
+| GUNS | `GUN_PERIOD` doubles, or guns dead |
+
+Three lives become three hits' worth of parts. **Make smoke-trail length
+the damage readout** so it is legible without looking at the HUD.
+
+"Got home on a dead engine" is a sentence a player says out loud. "I had
+one life left" is not.
+
+*Audit:* every damage **combination** still permits RTB and a landing. A
+damage state you cannot survive is just a delayed death.
+*Effort:* medium.
+
+### R3. Make the multiplier spendable
+`mult` is currently passive — it rises while low, decays while high, and
+that is all (`Sim.kt:545`). Let the player **cash it in mid-flight**: spend
+accumulated greed to patch one damaged part or rearm bombs. Spending
+resets `mult` to 1.
+
+This converts a meter into a dilemma re-offered every few seconds — push
+for x9, or cash out and survive. Strongest "one more go" mechanic available
+for the least code.
+
+*Audit:* spending can never soft-lock — there is always an affordable path
+to RTB.
+*Effort:* small. **Best value-to-effort in this document.**
 
 ---
 
-## Tier 2 — feel
+## Tier T — protect what exists
 
-### T2.1 Haptics
-**Why:** `grep -rn "Vibrat\|HapticFeedback" app/src/` returns **nothing**.
-There is no touch feedback at all. On a phone this is the cheapest
-perceived-quality win available.
-**Do:** `VibrationEffect` in `GameView` only. Short tick on gun fire,
-sharper on a hit taken, a double on a sector capture and on a promotion.
-Respect the existing mute toggle, or give haptics their own setting.
-**Effort:** small. **Best effort-to-impact ratio in this document.**
+Not glamorous. T2 in particular is the only reason the rest is safe to
+build.
 
-### T2.2 Screen shake and hit-stop
-**Why:** a lethal burst and a scored graze currently look the same in the
-frame buffer.
-**Do:** a few frames of camera offset on a hit taken, and 2–3 frames of
-freeze on a kill. Both belong in `Renderer`/`Sim` as pure state so they are
-auditable.
-**Audit:** prove shake never moves the plane's drawn position relative to
-its hitbox (that is lesson #2 wearing a new hat), and that hit-stop never
-drops a physics tick.
-**Effort:** small.
+### T1. Run the audit in CI
+92 checks and nothing runs them automatically. GitHub Actions: run
+`tools/kotlinc-setup.sh` then `tools/audit.sh` on push and PR, fail on
+non-zero exit, cache `~/.dawnpatrol-kt`.
+*Effort:* small.
 
-### T2.3 More synthesised sound
-**Why:** `Sound.kt` has four effects and an engine drone. No sound for a
-graze, a chain, a capture, a promotion, the ground rushing up.
-**Do:** extend the existing `clip()` synthesis. Add a rising arpeggio for a
-chain and a two-note fanfare for a promotion. Still zero audio files.
-**Effort:** small.
+### T2. Build the APK in CI
+`GameView.kt` + `Sound.kt` + `MainActivity.kt` — **508 lines that no
+automated step ever compiles.** The off-device toolchain skips them
+deliberately because they import `android.*`. They are only checked when a
+human presses Build in Android Studio. Every Android-layer change between
+builds is unverified.
 
-### T2.4 Stall and spin
-**Why:** climbing has no cost but gravity. Real fighters run out of energy.
-**Do:** sustained full climb bleeds airspeed; below a threshold the nose
-drops and control authority halves until speed recovers. Makes the altitude
-bargain two-sided instead of "high is simply safer".
-**Audit:** prove a stall is always recoverable above a stated altitude, and
-that it cannot be triggered accidentally in the first sortie.
-**Effort:** medium. Changes core feel — prototype and fly it before keeping.
+Add `./gradlew assembleDebug` with `android-actions/setup-android`; upload
+the APK as an artifact so a build can be installed without opening the IDE.
+*Effort:* small. **Highest risk reduction per line here.**
+
+### T3. Version the save file
+`Sim.load()` reads bare keys with no schema version. R1–R3 and Tier S all
+add persisted state; without this, a stale value reads as a valid one.
+Write `save_version`; on mismatch migrate explicitly or reset only the
+affected keys — never `best`, `bestScore` or `front`.
+*Audit:* load an old blob, assert nothing is nonsense; an unknown future
+version must not crash.
+*Effort:* small. **Do before any item that persists new state.**
+
+### T4. Backup rules
+`allowBackup="true"` with no rules means Android may restore a save from a
+different device or build. Add `dataExtractionRules` / `fullBackupContent`.
+*Effort:* tiny.
 
 ---
 
-## Tier 3 — retention
+## Tier F — feel (cheap, high leverage, do even if Tier R slips)
 
-### T3.1 A run history and a stats screen
-**Why:** `best` and `bestScore` are the only history kept. There is nowhere
-to see a campaign.
-**Do:** store the last ~20 sorties (score, rows, sectors, cause) and show
-them on a screen reachable from the ready state. Lifetime tallies too —
-total depots, total sectors, total rows.
-**Effort:** medium.
+### F1. Haptics
+`grep -rn "Vibrat\|HapticFeedback" app/src/` returns **nothing**. Cat on a
+Fence already has this — **port it**: `cat_on_a_fence`
+`GameView.kt:355–360` (VibratorManager/Vibrator with an API fallback) and
+`:537–538` (`hasVibrator()` guard, `VibrationEffect.createOneShot`).
 
-### T3.2 A ghost of your best run
-**Why:** the end card says "180 ROWS SHORT" but you never see the ghost.
-**Do:** record the best run's altitude trace (one byte per 8 rows is
-plenty), draw it as a faint dotted line. Chasing a line beats chasing a
-number.
-**Effort:** medium.
+Short tick on graze, heavier on damage, heaviest on death, double on sector
+capture. Respect the existing mute toggle or give haptics their own.
+*Effort:* small. **Best effort-to-impact ratio here.**
 
-### T3.3 Medals
-**Why:** ranks are the only award and they are purely cumulative.
-**Do:** one-off medals for specific feats — a 6 chain, a sector without
-firing a gun, a sortie with no damage, a balloon taken with the last bomb.
-Shown on the stats screen.
-**Effort:** small, on top of T3.1.
+### F2. Hit-stop
+Freeze the sim 2–3 ticks on a kill and on taking damage, scaled by target
+value. The cheapest juice that exists.
+*Audit:* hit-stop must never drop a physics tick or desync `dt`.
+*Effort:* small.
 
-### T3.4 Name the sectors
-**Why:** "SECTOR 7" is a number. The front is the game's best idea and it
-reads like a spreadsheet cell.
-**Do:** generate a name per sector from `World.hash32` and a word list
-(VERDUN RIDGE, THE SALIENT, BAPAUME WOOD). Pure, deterministic, free.
-**Effort:** tiny. **Punches far above its cost.**
+### F3. Death must be legible
+`crashCause` and `SO_CLOSE` exist — go further. Freeze-frame the moment of
+death, highlight the fatal shell or cable, and **always print a distance**:
+`ENGINE FIRE — 400 ROWS FROM BASE`. That number is what makes a thumb tap
+again.
+*Effort:* small.
+
+### F4. Audio is the thinnest system in the build
+`Sound.kt` has gun / bomb / thud / hit plus engine pitch. Add, all
+synthesised: flak burst with **distinct near vs far timbre** (the near one
+is the graze cue), a whoosh on a graze, Doppler on a passing scout, a sting
+on sector capture, and the **engine note dropping when the engine is hit**
+— audio as damage readout, pairing with R2.
+*Effort:* small–medium.
+
+### F5. Screen shake
+A few frames of camera offset on damage taken.
+*Audit:* shake must never move the plane's drawn position relative to its
+hitbox — that is lesson #2 in a new hat.
+*Effort:* small.
 
 ---
 
-## Tier 4 — reach and polish
+## Tier V — variety
 
-### T4.1 A settings screen
-**Why:** mute is the only option and it is a HUD button. No haptics
-toggle, no left-handed mirror, no reduced motion.
-**Do:** a simple panel from the ready state. Left/right control swap
-matters most — the game is currently unplayable as designed for a
-left-handed player who wants the climb under their dominant thumb.
-**Effort:** small.
+### V1. Authored set pieces, sequenced procedurally
+`World.SLOT_TABLE` is 16 entries shuffled — texture, not encounters, so
+every sortie has the same rhythm. Hand-author ~12 chunks and let the
+generator choose and tune the **sequence**: flak gauntlet, zeppelin, low
+pass under a bridge span, searchlight alley, balloon line, ace intercept,
+artillery barrage crossing the screen, a friendly bomber to escort, a
+railway with a moving train.
 
-### T4.2 Tablets, foldables and very tall phones
-**Why:** `onSizeChanged` does one uniform scale with letterbox bars. On a
-tablet that is a small picture in a large black frame.
-**Do:** keep the fixed logical canvas, but extend the sky and ground to
-fill the bars rather than painting them black.
-**Audit:** prove the playfield geometry is unchanged at every aspect ratio
-— the extra area must be decoration only, never advantage.
-**Effort:** medium.
+Pure procedural goes samey; pure handmade is finite. Twelve chunks shuffled
+gives hundreds of distinct sorties.
+*Audit:* extend A1/A5 across chunk boundaries; every chunk survivable from
+any entry altitude.
+*Effort:* large.
 
-### T4.3 Reduced-motion and bigger-text options
-**Why:** the dither, shake and flashing prompts are a lot; the 3x5 font is
-small at 48px-equivalent.
-**Do:** a reduced-motion flag that stills the dither and disables shake; a
-large-text flag that doubles HUD text scale.
-**Effort:** small.
+### V2. More than one aircraft, unlocked by rank
+You earn eight ranks and fly the same machine at all of them — the reward
+for promotion is a word. Not stat bumps, **different verbs**:
 
-### T4.4 Google Play readiness
-**Why:** the 512 icon exists; nothing else does.
-**Do:** signed release build config, `targetSdk` bump check, a privacy
-statement (the game collects nothing — say so), store screenshots generated
-from `tools/frames.sh` rather than hand-captured.
-**Effort:** small.
+- **SCOUT** — nimble, fast climb, 2 bombs (dodge-heavy)
+- **BOMBER** — heavy, poor climb, 12 bombs (commit to a line)
+- **TRIPLANE** — slow forward, superb climb (vertical game)
+
+`tools/PlaneLab.kt` already holds `TRIPLANE2` and `PARASOL2` — drawn,
+fitted to the hitbox, compared against the current plane, never installed.
+The art is done.
+*Audit:* re-run A4, A6, A8, A9 and A14 **per aircraft**. A poor climber
+must still clear every balloon and dodge every legal shell.
+*Effort:* medium. **Multiplies replay value more than any content item,
+because it makes the player re-learn a game they already know.**
+
+### V3. A named recurring rival
+Scouts are anonymous. Add **one** named enemy ace persisted in `Store`:
+own silhouette, a tally of *your* downed machines painted on it, escalating
+aggression each appearance. Kill them and a new ace inherits the grudge;
+tally resets.
+
+A personal grudge is the cheapest strong emotion in game design. Roughly
+150 lines: persistent state plus a smarter tracker than `ENEMY_*`.
+*Audit:* always escapable (extend A14) and always killable.
+*Effort:* medium.
+
+### V4. Weather, chosen per sortie and shown at the briefing
+Clear / headwind / crosswind / fog / storm.
+`headwind` lowers `SPEED_*` (longer sortie, more fuel) · `crosswind`
+drifts bombs laterally · `fog` makes flak fire blind (huge `AIM_ERR`) but
+hides targets · `storm` adds vertical gusts perturbing `vy`.
+
+Free replay variety that changes **how** you fly, not just the numbers.
+*Audit:* every weather state still permits a clearable sortie.
+*Effort:* medium.
+
+### V5. A stated objective per sortie
+Orders are passive tallies of what you happened to do. Give the **sortie
+itself** an objective, shown on the briefing: destroy the railhead /
+photograph a sector (fly level and low over a span, no firing) / escort the
+bomber home / night raid with no searchlight locks. Pairs with R1.
+*Effort:* medium.
+
+---
+
+## Tier S — stories and self-competition
+
+### S1. Ghost of your best run
+A faint silhouette flying your best sortie's recorded path. One byte per 8
+rows is plenty. Creates competition with yourself on every run, fully
+offline.
+*Effort:* medium.
+
+### S2. Daily seeded sortie — with no timer
+Seed the world from the **date**. Same sortie for everyone that day, local
+best kept. This is *not* the thing the rules forbid: no streak, no
+punishment, nothing lost by skipping a day. Pure upside, fully offline.
+*Effort:* small.
+
+### S3. Run history, lifetime stats, medals
+Store the last ~20 sorties (score, rows, sectors, cause) plus lifetime
+tallies, on a screen reachable from the ready state. One-off medals for
+specific feats — a 6-chain, a sector without firing a gun, a sortie with no
+damage, a balloon taken with the last bomb.
+*Effort:* medium.
+
+### S4. Name the sectors
+"SECTOR 7" reads like a spreadsheet cell. Generate a name per sector from
+`World.hash32` and a word list — VERDUN RIDGE, THE SALIENT, BAPAUME WOOD.
+Deterministic, pure, free.
+*Effort:* tiny. **Punches far above its cost.**
+
+### S5. Named pilots with permadeath and a memorial — *decide before building*
+A squadron roster in `Store`: generated name, sortie count, a trait earned
+by surviving N sorties. GAME OVER kills that pilot permanently; the name
+goes on a scrollable memorial.
+
+**Read this before starting it.** The argument for it is "losing a pilot on
+their 11th sortie hurts, and hurt is what brings people back". That is one
+word away from the pattern this project explicitly rules out. Attachment is
+real and good; *punishment for having played* is the thing `Orders.kt`
+promises not to do. If it is built, the next pilot must already be waiting
+one tap away and nothing earned may be lost with the dead one — it is a
+**story layer, not a stake**.
+*Effort:* medium. **Do not build before R1–R3.** Meta-progression wrapped
+around a thin core is just a menu.
+
+---
+
+## Tier A — reach and polish
+
+### A1. Settings screen
+Mute is the only option and it is a HUD button. Add a panel from the ready
+state. **Left/right control swap matters most** — the game is currently
+unplayable as designed for a left-handed player who wants climb under their
+dominant thumb.
+*Effort:* small.
+
+### A2. Teach by flying, not by reading
+The briefing card is **11 lines of text on a 100x175 screen** — a wall.
+*Resolution of a genuine conflict between the two source lists:* do **not**
+build a gated tutorial that takes control away; the three-state start gate
+already solves the panic problem. Instead, split the briefing into
+contextual prompts during a first sortie with no flak — "HOLD LEFT" as the
+ground approaches, "TAP RIGHT" as the first depot scrolls on — and keep the
+full card available from the settings panel.
+*Effort:* medium.
+
+### A3. Tablets, foldables, very tall phones
+`onSizeChanged` does one uniform scale with black letterbox bars. Extend
+sky and ground into the bars instead.
+*Audit:* playfield geometry unchanged at every aspect ratio — extra area is
+decoration only, never advantage.
+*Effort:* medium.
+
+### A4. Reduced motion and larger text
+A flag that stills the dither and disables shake; a flag that doubles HUD
+text scale.
+*Effort:* small.
+
+### A5. Play Store readiness
+Signed release config, `targetSdk` check, a privacy statement (the game
+collects nothing — say so), screenshots generated from `tools/frames.sh`.
+*Effort:* small.
 
 ---
 
 ## Deliberately not recommended
 
-- **Online anything** — leaderboards, accounts, ads, IAP. The brief is the
-  best *offline* game; every one of these adds a permission, a privacy
-  policy and a failure mode, and none of them makes the game better.
-- **Daily streaks or energy timers.** The pull should be "I was two depots
-  away", never "I will lose my streak". `Orders.kt` says this in a comment;
-  keep it true.
-- **A tutorial sequence.** The briefing card plus the three-state start gate
-  already do this without taking control away.
+- **Anything online** — leaderboards, accounts, ads, IAP. Each adds a
+  permission, a privacy policy and a failure mode; none makes the game
+  better. The brief is the best *offline* game.
+- **Energy timers, daily streaks, login rewards.** See S2 for how to get
+  the good part of a daily without the bad part.
 - **An engine or a physics library.** One custom `View`, one `Canvas`, no
-  dependencies. That constraint is why the audit can exist.
+  dependencies. That constraint is why the audit can exist at all.
 
 ---
 
-## Suggested order
-
-If you want one sequence rather than a menu:
+## Order of work
 
 ```
-T0.2  build the APK in CI          (stop shipping unverified Android code)
-T0.1  run the audit in CI
-T2.1  haptics                      (small, transforms feel)
-T3.4  name the sectors             (tiny, transforms tone)
-T1.1  aircraft unlocked by rank    (makes the rank ladder mean something)
-T2.2  screen shake and hit-stop
-T1.2  a second enemy type
-T0.3  version the save             (do before any more persisted state)
-T3.1  run history and stats
-T1.3  the enemy ace
+R1 + R2 + R3   together — one feature, and it is the upgrade
+T2             build the APK in CI (before the codebase grows)
+T1             audit in CI
+F1 F2 F3 F4    a weekend; the game feels twice as good
+T3             version the save, before any more persisted state
+S4             name the sectors (one afternoon, changes the tone)
+V2             aircraft by rank — makes the existing ladder mean something
+V3 V1          the rival, then set pieces
+V4 V5          weather, sortie objectives
+S1 S2 S3       ghost, daily seed, stats and medals
+A1 A2 A3 A4 A5 reach and store
+S5             only if the warning in it is resolved first
 ```
+
+**Every item needs its own audit entry in `tools/Audit.kt`, run against the
+shipped classes, in the style of A1–A25. A change that cannot be proven
+fair does not ship.**
