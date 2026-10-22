@@ -148,7 +148,8 @@ object Tune {
     // targets at all and the front stopped advancing - Audit A22.)
     const val SORTIE_LEN = 1200f      // rows out to the objective
     const val LAND_SPEED = 0.52f      // rows/tick, max sink on touchdown
-    const val LAND_ALT = 7f           // rows above ground that counts as down
+    const val LAND_ALT = 10f          // rows above ground that counts as down
+    const val STRIP_BLEND = 40f       // rows of easing either side of the flat
     // Base is a STRIP, not a point. As a point, a pilot arriving high or
     // fast sailed over it and flew west forever with no way back - Audit
     // A26 landed 0 of 10. A strip you can line up on, and a go-around if

@@ -630,8 +630,33 @@ class Sim(private val store: Store) {
 
     fun trenches(): List<Pair<Double, UInt>> = trenchBuf
 
-    fun groundAt(worldX: Double): Float =
-        World.surfaceY(worldX, trenchBuf).toFloat()
+    /**
+     * The surface, with the aerodrome levelled.
+     *
+     * The generator rolls the ground +/-5 rows, and a landing that needs
+     * altitude <= LAND_ALT and a gentle sink at the same moment is luck on
+     * terrain like that - the frame dumper kept writing LANDED=false,
+     * CAUSE=GROUND. Real aerodromes are flat, so the strip is flat, with a
+     * 40-row blend at each end so A5's "no step over 2 rows per column"
+     * still holds.
+     */
+    fun groundAt(worldX: Double): Float {
+        val raw = World.surfaceY(worldX, trenchBuf).toFloat()
+        if (endless) return raw
+        val lo = baseX - Tune.GOAROUND_OVERSHOOT - Tune.STRIP_BLEND
+        val hi = baseX + Tune.LAND_ZONE + Tune.STRIP_BLEND
+        if (worldX < lo || worldX > hi) return raw
+        val flat = World.surfaceY(baseX, trenchBuf).toFloat()
+        // full flat over the strip, easing out across the blend
+        val d = when {
+            worldX < baseX - Tune.GOAROUND_OVERSHOOT ->
+                ((baseX - Tune.GOAROUND_OVERSHOOT) - worldX).toFloat() / Tune.STRIP_BLEND
+            worldX > baseX + Tune.LAND_ZONE ->
+                (worldX - (baseX + Tune.LAND_ZONE)).toFloat() / Tune.STRIP_BLEND
+            else -> 0f
+        }.coerceIn(0f, 1f)
+        return flat + (raw - flat) * d
+    }
 
     fun slotKeyAt(worldX: Double): Int = World.cell(worldX, Art.SLOT_W.toDouble())
 
@@ -805,6 +830,12 @@ class Sim(private val store: Store) {
         if (chainFlash > 0f) chainFlash = max(0f, chainFlash - dt)
         if (sectorFlash > 0f) sectorFlash = max(0f, sectorFlash - dt)
         if (grazeFlash > 0f) grazeFlash = max(0f, grazeFlash - dt)
+        // These two shipped without decay for a while: the TURN FOR HOME
+        // banner would have sat on the screen for the rest of the sortie.
+        // The frame dumper found it by never matching "banner is partway
+        // through fading", which is a better bug report than a screenshot.
+        if (turnFlash > 0f) turnFlash = max(0f, turnFlash - dt)
+        if (landFlash > 0f) landFlash = max(0f, landFlash - dt)
 
         // ---- greed meter --------------------------------------------------
         if (altitude() < Tune.LOW_ALT) {

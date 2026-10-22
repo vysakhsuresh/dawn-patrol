@@ -857,20 +857,32 @@ object Audit {
             !fresh.paused, "")
 
         // ---- the world really does stop -----------------------------------
-        val s = Sim(MemStore())
-        s.dismissBriefing(); s.start()
-        var i = 0
-        // fly until there is plenty in the air to freeze
-        while (i < 40000 && !(s.shots.count { it.alive && it.kind == K_SHELL } >= 1 &&
-                s.shots.count { it.alive } >= 3 &&
-                s.enemies.any { it.alive } && !s.gameOver)) {
-            // LOW, deliberately: TestPilot cruises above the flak envelope,
-            // and a state with no shell in the air proves nothing here.
-            s.climbing = s.altitude() < 26f
-            s.firing = true
-            if (i % 150 == 0) s.dropBomb()
-            s.update(1f); i++
+        // Search ACROSS sorties. A sortie now ends when the aeroplane
+        // LANDS, not only when it is shot down, so a single run can finish
+        // with an empty sky and the search would report there was nothing
+        // to freeze.
+        val busyStore = MemStore()
+        var found: Sim? = null
+        for (attempt in 0 until 12) {
+            val a = Sim(busyStore)
+            a.dismissBriefing(); a.start()
+            var j = 0
+            while (j < 40000 && !a.gameOver) {
+                // LOW, deliberately: TestPilot cruises above the flak
+                // envelope, and a state with no shell in the air proves
+                // nothing here.
+                a.climbing = a.altitude() < 26f
+                a.firing = true
+                if (j % 150 == 0) a.dropBomb()
+                a.update(1f); j++
+                if (a.shots.count { it.alive && it.kind == K_SHELL } >= 1 &&
+                    a.shots.count { it.alive } >= 3 && a.enemies.any { it.alive }) break
+            }
+            if (!a.gameOver && a.shots.any { it.alive && it.kind == K_SHELL }) {
+                found = a; break
+            }
         }
+        val s = found ?: Sim(busyStore).also { it.dismissBriefing(); it.start() }
         check("A20 reached a busy state to freeze",
             !s.gameOver && s.shots.any { it.alive && it.kind == K_SHELL },
             "${s.shots.count { it.alive }} shots in the air " +

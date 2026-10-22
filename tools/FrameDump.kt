@@ -203,6 +203,66 @@ object FrameDump {
             if (!shot) println("frameF SKIPPED - no capture in 8 sorties")
         }
 
+        // ---- G/H/I  the return leg, the turn, and the landing card -------
+        // One shared pilot, the same approach profile Audit A26 proves can
+        // get home, and a retry across sorties: a single sortie is not
+        // guaranteed to produce any given state, and a dumper that waits
+        // forever for one hangs the whole run.
+        run {
+            fun flyApproach(sim: Sim, onTick: (Sim) -> Unit): Boolean {
+                var t = 0
+                while (t < 20000 && !sim.gameOver) {
+                    val toStrip = (sim.planeWorldX() - sim.baseX).toFloat()
+                    if (sim.leg == LEG_HOME && toStrip < Tune.HOME_SAFE) {
+                        val want = if (toStrip > Tune.LAND_ZONE) 24f else 7f
+                        sim.climbing = sim.altitude() < want
+                    } else TestPilot.cruise(sim, 2f)
+                    sim.firing = true
+                    if (t % 150 == 0) sim.dropBomb()
+                    sim.update(1f); t++
+                    onTick(sim)
+                }
+                return sim.landed
+            }
+
+            val store = MemStore()
+            var gotG = false; var gotH = false; var gotI = false
+            for (att in 0 until 12) {
+                val sim = Sim(store)
+                sim.dismissBriefing(); sim.start()
+                var shotH = false; var shotG = false
+                val landedNow = flyApproach(sim) { s ->
+                    if (!gotH && !shotH && s.turnFlash > 0f &&
+                        s.turnFlash < Tune.TURN_FLASH * 0.85f) {
+                        r.render(s)
+                        write(r, r.palette(s.phase()), "$dir/fH_turn.ppm")
+                        println("frameH turn at x=" + s.planeWorldX().toInt())
+                        shotH = true; gotH = true
+                    }
+                    if (!gotG && !shotG && s.leg == LEG_HOME && s.damageCount() >= 1 &&
+                        s.pending > 0 && s.turnFlash <= 0f) {
+                        r.render(s)
+                        write(r, r.palette(s.phase()), "$dir/fG_homebound.ppm")
+                        println("frameG homebound dir=" + s.dir + " damage=" +
+                            s.damageCount() + " atRisk=" + s.pending)
+                        shotG = true; gotG = true
+                    }
+                }
+                if (landedNow && !gotI) {
+                    var g = 0
+                    while (!sim.canRestart() && g < 600) { sim.update(1f); g++ }
+                    r.render(sim)
+                    write(r, r.palette(sim.phase()), "$dir/fI_landed.ppm")
+                    println("frameI LANDED score=" + sim.score +
+                        " front+" + sim.frontMoved.toInt())
+                    gotI = true
+                }
+                if (gotG && gotH && gotI) break
+            }
+            if (!gotG) println("frameG SKIPPED")
+            if (!gotI) println("frameI SKIPPED - nothing landed in 12 sorties")
+        }
+
         // ---- 3  night, caught in a searchlight ----------------------------
         run {
             val sim = Sim(MemStore())
